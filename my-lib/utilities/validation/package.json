@@ -1,0 +1,22 @@
+{
+  "name": "@myorg/validation",
+  "version": "0.1.0",
+  "description": "Input validation and data sanitization utilities for Lambda functions",
+  "type": "module",
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/taleofddh/taleofddh-lib.git"
+  },
+  "keywords": [
+    "validation",
+    "sanitization",
+    "input",
+    "lambda"
+  ],
+  "dependencies": {},
+  "devDependencies": {},
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

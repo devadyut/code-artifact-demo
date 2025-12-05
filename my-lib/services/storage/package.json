@@ -1,0 +1,26 @@
+{
+  "name": "@myorg/storage",
+  "version": "0.1.0",
+  "description": "Tale of DDH object storage service wrappers for AWS Lambda",
+  "type": "module",
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/taleofddh/taleofddh-lib.git"
+  },
+  "keywords": [
+    "aws",
+    "lambda",
+    "storage",
+    "object",
+    "s3"
+  ],
+  "dependencies": {},
+  "devDependencies": {
+    "@aws-sdk/client-s3": "^3.926.0",
+    "@aws-sdk/s3-request-presigner": "^3.926.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "@myorg/constants",
+  "version": "0.1.0",
+  "description": "Shared constants and configuration values for Lambda functions",
+  "type": "module",
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/taleofddh/taleofddh-lib.git"
+  },
+  "keywords": [
+    "constants",
+    "configuration",
+    "lambda",
+    "aws"
+  ],
+  "dependencies": {},
+  "devDependencies": {},
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

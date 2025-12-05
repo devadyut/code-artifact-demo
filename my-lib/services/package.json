@@ -1,0 +1,27 @@
+{
+  "name": "@myorg/services",
+  "version": "0.1.0",
+  "description": "My App service wrappers for AWS Lambda",
+  "type": "module",
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/devadyut/code-artifact-demo.git"
+  },
+  "keywords": [
+    "aws",
+    "lambda",
+    "service",
+    "wrappers"
+  ],
+  "dependencies": {
+    "@myorg/database": "^0.1.0",
+    "@myorg/storage": "^0.1.0"
+  },
+  "devDependencies": {
+    "jest": "^29.0.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

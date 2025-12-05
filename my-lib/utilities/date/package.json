@@ -1,0 +1,21 @@
+{
+  "name": "@myorg/date",
+  "version": "0.1.0",
+  "description": "Date formatting utilities for Lambda functions",
+  "type": "module",
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/taleofddh/taleofddh-lib.git"
+  },
+  "keywords": [
+    "date",
+    "formatting",
+    "utilities"
+  ],
+  "dependencies": {},
+  "devDependencies": {},
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

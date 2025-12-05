@@ -1,0 +1,40 @@
+{
+  "name": "auth-service",
+  "version": "0.0.1",
+  "description": "Auth Service API for My App",
+  "main": "handler.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Devadyuti Das",
+  "repository": {
+    "type": "git",
+    "url": "git+https://git@github.com/devadyut/code-artifacts-demo.git"
+  },
+  "keywords": [
+    "security",
+    "auth"
+  ],
+  "bugs": {
+    "url": "https://github.com/devadyut/code-artifacts-demo/issues"
+  },
+  "homepage": "https://github.com/devadyut/code-artifacts-demo#readme",
+  "dependencies": {
+    "@fast-csv/format": "^5.0.5",
+    "@fast-csv/parse": "^5.0.5",
+    "@myorg/database": "^0.0.1",
+    "@myorg/response": "^0.0.1",
+    "dotenv": "^17.2.3",
+    "fast-csv": "^5.0.5"
+  },
+  "devDependencies": {
+    "@aws-sdk/client-dynamodb": "^3.926.0",
+    "@aws-sdk/lib-dynamodb": "^3.926.0",
+    "serverless-domain-manager": "^8.0.0",
+    "serverless-offline": "^14.4.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

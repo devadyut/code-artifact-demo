@@ -1,0 +1,238 @@
+# Welcome to Serverless!
+#
+# This file is the main config file for your service.
+# It's very minimal at this point and uses default values.
+# You can always add more config options for more control.
+# We've included some commented out config examples here.
+# Just uncomment any of them to get that config option.
+#
+# For full config options, check the docs:
+#    docs.serverless.com
+#
+# Happy Coding!
+
+service: ${env:SERVICE_NAME, 'core'}
+# app and org for use with dashboard.serverless.com
+#app: your-app-name
+#org: your-org-name
+
+# You can pin your service to only deploy with a specific Serverless version
+# Check out our docs for more details
+frameworkVersion: '4'
+
+provider:
+  name: aws
+  runtime: ${env:RUNTIME, 'nodejs22.x'}
+  endpointType: ${env:ENDPOINT_TYPE, 'regional'}
+  profile: ${env:APP_NAME, 'taleofddh'}
+
+  # you can overwrite defaults here
+  stage: ${opt:stage, 'dev'}
+  region: ${opt:region, 'eu-west-1'}
+  environment:
+    ENVIRONMENT: ${opt:stage, self:provider.stage}
+    REGION: ${opt:region, 'eu-west-1'}
+    APP_NAME: ${env:APP_NAME, 'taleofddh'}
+    SERVICE_NAME: ${env:SERVICE_NAME, 'core'}
+    S3_BUCKET: ${env:S3_BUCKET, 'taleofddh-data'}
+
+  apiGateway:
+    shouldStartNameWithService: true
+
+# you can add statements to the Lambda function's IAM Role here
+  iamRoleStatements:
+    - Effect: "Allow"
+      Action:
+        - lambda:InvokeFunction
+        - kms:Encrypt
+        - kms:Decrypt
+        - kms:ReEncrypt*
+        - kms:GenerateDataKey*
+        - kms:DescribeKey
+      Resource: "*"
+    - Effect: "Allow"
+      Action:
+        - s3:ListBucket
+      Resource:
+        - arn:aws:s3:::${env:S3_BUCKET, 'taleofddh-data'}
+    - Effect: "Allow"
+      Action:
+        - s3:GetObject
+      Resource:
+        - arn:aws:s3:::${env:S3_BUCKET, 'taleofddh-data'}/*
+
+# you can define service wide environment variables here
+#  environment:
+#    variable1: value1
+
+# you can add packaging information here
+package:
+  individually: true
+#  include:
+#    - include-me.js
+#    - include-me-dir/**
+#  exclude:
+#    - exclude-me.js
+#    - exclude-me-dir/**
+
+functions:
+  findMenuList:
+    handler: handler.findMenuList
+#    The following are a few example events you can configure
+#    NOTE: Please make sure to change your handler code to work with those events
+#    Check the event documentation for details
+    events:
+      - http:
+          path: menuList/{active}
+          method: get
+          cors: true
+          request:
+            parameters:
+              paths:
+                active: true
+#      - websocket: $connect
+#      - s3: ${env:BUCKET}
+#      - schedule: rate(10 minutes)
+#      - sns: greeter-topic
+#      - stream: arn:aws:dynamodb:region:XXXXXX:table/foo/stream/1970-01-01T00:00:00.000
+#      - alexaSkill: amzn1.ask.skill.xx-xx-xx-xx
+#      - alexaSmartHome: amzn1.ask.skill.xx-xx-xx-xx
+#      - iot:
+#          sql: "SELECT * FROM 'some_topic'"
+#      - cloudwatchEvent:
+#          event:
+#            source:
+#              - "aws.ec2"
+#            detail-type:
+#              - "EC2 Instance State-change Notification"
+#            detail:
+#              state:
+#                - pending
+#      - cloudwatchLog: '/aws/lambda/hello'
+#      - cognitoUserPool:
+#          pool: MyUserPool
+#          trigger: PreSignUp
+#      - alb:
+#          listenerArn: arn:aws:elasticloadbalancing:eu-west-1:XXXXXX:listener/app/my-load-balancer/50dc6c495c0c9188/
+#          priority: 1
+#          conditions:
+#            host: example.com
+#            path: /hello
+
+#    Define function environment variables here
+    environment:
+      OBJECT_NAME: "menu"
+
+  findPromotionList:
+    handler: handler.findPromotionList
+    events:
+      - http:
+          path: promotionList/{active}
+          method: get
+          cors: true
+          request:
+            parameters:
+              paths:
+                active: true
+    environment:
+      OBJECT_NAME: "promotion"
+
+  findTermsAndConditionsList:
+    handler: handler.findTermsAndConditionsList
+    events:
+      - http:
+          path: termsAndConditionsList
+          method: get
+          cors: true
+    environment:
+      OBJECT_NAME: "termsAndConditions"
+
+  findPrivacyPolicyList:
+    handler: handler.findPrivacyPolicyList
+    events:
+      - http:
+          path: privacyPolicyList
+          method: get
+          cors: true
+    environment:
+      OBJECT_NAME: "privacyPolicy"
+
+  findFrequentlyAskedQuestionList:
+    handler: handler.findFrequentlyAskedQuestionList
+    events:
+      - http:
+          path: frequentlyAskedQuestionList
+          method: get
+          cors: true
+    environment:
+      OBJECT_NAME: "frequentlyAskedQuestion"
+
+  findCountryByCode:
+    handler: handler.findCountryByCode
+    events:
+      - http:
+          path: countryByCode/{countryCode}
+          method: get
+          cors: true
+          request:
+            parameters:
+              paths:
+                countryCode: true
+    environment:
+      OBJECT_NAME: "country"
+
+  findCountryByName:
+    handler: handler.findCountryByName
+    events:
+      - http:
+          path: countryByName/{countryName}
+          method: get
+          cors: true
+          request:
+            parameters:
+              paths:
+                countryName: true
+    environment:
+      OBJECT_NAME: "country"
+
+  createAuditEntry:
+    handler: handler.createAuditEntry
+    events:
+      - http:
+          path: auditEntry
+          method: post
+          cors: true
+
+# you can add CloudFormation resource templates here
+resources:
+  # API Gateway Errors
+  - ${file(resources/api-gateway-errors.yml)}
+#  Resources:
+#    NewResource:
+#      Type: AWS::S3::Bucket
+#      Properties:
+#        BucketName: my-new-bucket
+#  Outputs:
+#     NewOutput:
+#       Description: "Description for the output"
+#       Value: "Some output value"
+
+plugins:
+  - serverless-domain-manager
+  - serverless-offline
+
+custom:
+  stage: ${opt:stage, self:provider.stage}
+  domains:
+    prod: ${env:API_DOMAIN, 'api.taleofddh.com'}
+    dev: ${self:custom.stage}-${env:API_DOMAIN, 'api.taleofddh.com'}
+  customDomain:
+    domainName: ${self:custom.domains.${self:custom.stage}}
+    basePath: ${env:BASE_PATH, 'core'}
+    stage: ${self:custom.stage}
+    certificateName: ${env:CERTIFICATE_NAME, '*.taleofddh.com'}
+    hostedZoneId: ${env:HOSTED_ZONE_ID, 'Z044305914KLOWN7PAF5E'}
+    createRoute53Record: true
+    endpointType: ${env:ENDPOINT_TYPE, 'regional'}
+    securityPolicy: ${env:SECURITY_POLICY, 'tls_1_2'}
+    apiType: ${env:API_TYPE, 'rest'}

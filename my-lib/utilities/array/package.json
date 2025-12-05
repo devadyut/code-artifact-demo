@@ -1,0 +1,23 @@
+{
+  "name": "@myorg/array",
+  "version": "0.1.0",
+  "description": "Array manipulation utilities for Lambda functions",
+  "type": "module",
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/taleofddh/taleofddh-lib.git"
+  },
+  "keywords": [
+    "array",
+    "utilities",
+    "groupby",
+    "distinct",
+    "sort"
+  ],
+  "dependencies": {},
+  "devDependencies": {},
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

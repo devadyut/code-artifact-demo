@@ -1,0 +1,23 @@
+{
+  "name": "@myorg/response",
+  "version": "0.1.0",
+  "description": "HTTP response utilities with CORS headers for Lambda functions",
+  "type": "module",
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/taleofddh/taleofddh-lib.git"
+  },
+  "keywords": [
+    "aws",
+    "lambda",
+    "response",
+    "cors",
+    "http"
+  ],
+  "dependencies": {},
+  "devDependencies": {},
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "@myorg/middleware",
+  "version": "0.1.0",
+  "description": "Common middleware functions for Lambda handlers",
+  "type": "module",
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/taleofddh/taleofddh-lib.git"
+  },
+  "keywords": [
+    "middleware",
+    "lambda",
+    "cors",
+    "validation",
+    "aws"
+  ],
+  "dependencies": {},
+  "devDependencies": {},
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "aws": {
+    "region": "eu-west-1",
+    "accountId": "${AWS_ACCOUNT_ID}",
+    "profile": "default"
+  },
+  "codeartifact": {
+    "domain": "myorg",
+    "repository": "myorg-repo",
+    "scope": "@myorg",
+    "externalConnection": "public:npmjs"
+  },
+  "github": {
+    "repository": "code-artifact-demo"
+  },
+  "paths": {
+    "sharedLibs": "./my-lib",
+    "consumers": ["./my-api/auth", "./my-api/core", "./my-ui"]
+  }
+}

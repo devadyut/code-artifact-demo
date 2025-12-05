@@ -1,0 +1,39 @@
+{
+  "name": "core-service",
+  "version": "0.0.1",
+  "description": "Core APIs for My App",
+  "main": "handler.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "Devadyuti Das",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/devadyut/code-artifacts-demo.git"
+  },
+  "keywords": [
+    "storage",
+    "core"
+  ],
+  "bugs": {
+    "url": "https://github.com/devadyut/code-artifacts-demo/issues"
+  },
+  "homepage": "https://github.com/tdevadyut/code-artifacts-demo#readme",
+  "dependencies": {
+    "@fast-csv/format": "^5.0.5",
+    "@fast-csv/parse": "^5.0.5",
+    "@myorg/response": "^0.0.1",
+    "@myorg/storage": "^0.0.1",
+    "dotenv": "^17.2.3",
+    "fast-csv": "^5.0.5"
+  },
+  "devDependencies": {
+    "@aws-sdk/s3-request-presigner": "^3.926.0",
+    "serverless-domain-manager": "^8.0.0",
+    "serverless-offline": "^14.4.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

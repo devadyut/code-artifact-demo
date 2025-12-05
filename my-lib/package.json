@@ -1,0 +1,39 @@
+{
+  "name": "@myorg/libraries",
+  "version": "0.1.0",
+  "description": "My App shared libraries of services, utilities and more",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "install:all": "node scripts/install-packages.js",
+    "install:services": "node scripts/install-packages.js services",
+    "install:utilities": "node scripts/install-packages.js utilities",
+    "list": "node scripts/install-packages.js list",
+    "configure": "node scripts/configure-packages.js",
+    "version:patch": "node scripts/version-manager.js patch --no-git",
+    "version:minor": "node scripts/version-manager.js minor --no-git",
+    "version:major": "node scripts/version-manager.js major --no-git",
+    "publish:all": "node scripts/publish-packages.js all",
+    "publish:services": "node scripts/publish-packages.js services",
+    "publish:utilities": "node scripts/publish-packages.js utilities"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/devadyut/code-artifact-demo.git"
+  },
+  "keywords": [
+    "Library",
+    "Services",
+    "Utilities"
+  ],
+  "author": "Devadyuti Das",
+  "license": "Apache-2.0",
+  "bugs": {
+    "url": "https://github.com/devadyut/code-artifact-demo/issues"
+  },
+  "homepage": "https://github.com/devadyut/code-artifact-demo#readme",
+  "devDependencies": {
+    "jest": "^29.0.0",
+    "js-yaml": "^4.1.0"
+  }
+}

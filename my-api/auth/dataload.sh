@@ -1,0 +1,11 @@
+#!/bin/bash
+
+# DATA LOADING SCRIPT
+
+# SETTING ENVIRONMENT PARAMETERS
+ENVIRONMENT=$1
+
+# RUN DATALOADING SCRIPTS
+node dataload1.js
+
+# node dataload2.js

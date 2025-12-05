@@ -1,0 +1,12 @@
+version: 0.2
+
+phases:
+  build:
+    commands:
+      - echo "Running CodeArtifact setup..."
+      - echo "This will install dependencies, create infrastructure, and publish packages"
+      - npm run setup
+      
+artifacts:
+  files:
+    - '**/*'

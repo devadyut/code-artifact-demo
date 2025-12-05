@@ -1,0 +1,28 @@
+{
+    "name": "my-api",
+    "version": "4.2.0",
+    "description": "Multi-module serverless Lambda repository with automated deployment scripts",
+    "type": "module",
+    "scripts": {
+        "install:all": "node scripts/install.js",
+        "deploy:dev": "node scripts/deploy.js dev",
+        "deploy:prod": "node scripts/deploy.js prod"
+    },
+    "engines": {
+        "node": ">=22.0.0",
+        "npm": ">=10.0.0"
+    },
+    "keywords": [
+        "serverless",
+        "lambda",
+        "aws",
+        "deployment",
+        "automation"
+    ],
+    "author": "",
+    "repository": {
+        "type": "git",
+        "url": "git+https://git@github.com/evadyut/code-artifacts-demo.git"
+    },
+    "devDependencies": {}
+}

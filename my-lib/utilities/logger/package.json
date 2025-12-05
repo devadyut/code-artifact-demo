@@ -1,0 +1,22 @@
+{
+  "name": "@myorg/logger",
+  "version": "0.1.0",
+  "description": "Centralized logging utilities for Lambda functions",
+  "type": "module",
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/taleofddh/taleofddh-lib.git"
+  },
+  "keywords": [
+    "logging",
+    "lambda",
+    "structured",
+    "aws"
+  ],
+  "dependencies": {},
+  "devDependencies": {},
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

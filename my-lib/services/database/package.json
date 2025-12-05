@@ -1,0 +1,26 @@
+{
+  "name": "@myorg/database",
+  "version": "0.1.0",
+  "description": "Tale of DDH key:value database service wrappers for AWS Lambda",
+  "type": "module",
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/taleofddh/taleofddh-lib.git"
+  },
+  "keywords": [
+    "aws",
+    "lambda",
+    "database",
+    "key:value",
+    "dynamodb"
+  ],
+  "dependencies": {},
+  "devDependencies": {
+    "@aws-sdk/client-dynamodb": "^3.926.0",
+    "@aws-sdk/lib-dynamodb": "^3.926.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
