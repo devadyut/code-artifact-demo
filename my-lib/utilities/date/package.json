@@ -1,6 +1,6 @@
 {
   "name": "@myorg/date",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "Date formatting utilities for Lambda functions",
   "type": "module",
   "main": "index.js",
