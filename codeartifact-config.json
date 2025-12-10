@@ -11,7 +11,7 @@
     "externalConnection": "public:npmjs"
   },
   "github": {
-    "repository": "code-artifact-demo"
+    "repository": "devadyut/code-artifact-demo"
   },
   "paths": {
     "sharedLibs": "./my-lib",

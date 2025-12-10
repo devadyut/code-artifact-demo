@@ -11,6 +11,7 @@ This comprehensive guide explains how to set up AWS CodeArtifact for hosting pri
 - [Token Refresh for CI/CD](#token-refresh-for-cicd)
 - [External Repository Benefits](#external-repository-benefits)
 - [CI/CD Integration](#cicd-integration)
+  - [GitHub Webhook Setup](#github-webhook-setup)
 - [Using the Packages](#using-the-packages)
 - [Troubleshooting](#troubleshooting)
 - [Security Best Practices](#security-best-practices)
@@ -615,7 +616,60 @@ Expected output:
 
 ## CI/CD Integration
 
-### AWS CodeBuild
+### AWS CodeBuild with GitHub Webhook Integration
+
+For the most efficient CI/CD setup, use AWS CodeBuild with GitHub webhooks for direct integration:
+
+#### Quick Setup
+
+```bash
+# Set your GitHub personal access token
+export GITHUB_TOKEN=ghp_your_token_here
+
+# Run the CodeBuild setup script
+node scripts/setup-codebuild.js
+```
+
+This creates:
+- ✅ CodeBuild project with GitHub source integration
+- ✅ GitHub webhook with smart filters (main branch + my-lib/** changes only)
+- ✅ IAM service role with appropriate permissions
+- ✅ Automatic build status reporting to GitHub commits
+
+#### GitHub Token Requirements
+
+Create a GitHub Personal Access Token with these scopes:
+- **`repo`** (for private repos) or **`public_repo`** (for public repos)
+- **`repo:status`** (for build status updates)
+- **`admin:repo_hook`** (for webhook creation)
+
+Get your token at: https://github.com/settings/tokens
+
+#### How It Works
+
+1. **Smart Triggering**: Builds only trigger on pushes to `main` branch with changes in `my-lib/**`
+2. **Direct Integration**: No GitHub Actions needed - CodeBuild connects directly to GitHub
+3. **Status Updates**: Build results appear as commit status checks in GitHub
+4. **Fast Builds**: Typically 2-3x faster than GitHub Actions
+
+#### Fallback: GitHub Actions
+
+The GitHub Actions workflow serves as a backup when CodeBuild webhook isn't working:
+
+**Manual Trigger**:
+1. Go to Actions tab → "Publish Packages to CodeArtifact"
+2. Click "Run workflow"
+3. Optionally provide reason and force build options
+
+**When to Use**:
+- CodeBuild webhook is not responding
+- Testing the build process
+- Emergency package publishing
+- Debugging build issues
+
+For detailed setup instructions, see the [GitHub Webhook Setup](#github-webhook-setup) section below.
+
+### AWS CodeBuild (Basic Setup)
 
 The `buildspec.yml` file provides a complete example for AWS CodeBuild integration:
 
@@ -695,6 +749,309 @@ publish:
 ```
 
 **Note**: The setup script automatically installs dependencies and retrieves AWS Account ID, so no manual steps are needed!
+
+## GitHub Webhook Setup
+
+This section provides detailed instructions for setting up GitHub webhook integration with AWS CodeBuild for automated package publishing.
+
+### Overview
+
+The system uses AWS CodeBuild with GitHub webhooks to automatically build and publish packages when code changes are pushed to the `main` branch in the `my-lib/` directory. This provides faster, more direct integration compared to GitHub Actions.
+
+### Architecture
+
+```
+GitHub Repository (Push to main/my-lib/**)
+    ↓ (Webhook)
+AWS CodeBuild Project
+    ↓ (Build & Publish)
+AWS CodeArtifact Repository
+    ↓ (Install packages)
+Consumer Applications (my-api, my-ui)
+```
+
+### Prerequisites
+
+1. **AWS Account** with appropriate permissions
+2. **GitHub Repository** (public or private)
+3. **GitHub Personal Access Token** with required scopes
+4. **AWS CLI** configured with valid credentials
+5. **CodeArtifact domain and repository** already created
+
+### GitHub Personal Access Token Setup
+
+#### Step 1: Create GitHub Personal Access Token
+
+1. Go to GitHub Settings: https://github.com/settings/tokens
+2. Click "Generate new token" → "Generate new token (classic)"
+3. Set token name: `CodeBuild-PackagePublishing`
+4. Set expiration: Choose appropriate duration (90 days recommended)
+5. Select the following scopes:
+
+**Required Scopes:**
+
+- **`repo`** (for private repositories) OR **`public_repo`** (for public repositories)
+  - Grants access to repository contents
+  - Required for CodeBuild to access source code
+  
+- **`repo:status`**
+  - Allows updating commit status
+  - Required for build status reporting back to GitHub
+  
+- **`admin:repo_hook`** (if using webhook creation via API)
+  - Allows creating repository webhooks
+  - Required for automated webhook setup
+
+#### Step 2: Store Token Securely
+
+```bash
+# Set as environment variable (recommended for local setup)
+export GITHUB_TOKEN=ghp_your_token_here
+
+# Or add to your shell profile for persistence
+echo 'export GITHUB_TOKEN=ghp_your_token_here' >> ~/.bashrc
+source ~/.bashrc
+```
+
+#### Step 3: Verify Token
+
+```bash
+# Test token access
+curl -H "Authorization: token $GITHUB_TOKEN" \
+     https://api.github.com/user
+
+# Test repository access
+curl -H "Authorization: token $GITHUB_TOKEN" \
+     https://api.github.com/repos/your-org/code-artifact-demo
+```
+
+### CodeBuild Project Setup
+
+#### Step 1: Run Setup Script
+
+```bash
+# Ensure GitHub token is set
+echo $GITHUB_TOKEN
+
+# Run the setup script
+node scripts/setup-codebuild.js
+```
+
+The script will:
+1. ✅ Load configuration from `codeartifact-config.json`
+2. ✅ Verify AWS credentials and GitHub token
+3. ✅ Create IAM service role with required permissions
+4. ✅ Create/update CodeBuild project
+5. ✅ Configure GitHub webhook with path filters
+6. ✅ Test project functionality
+7. ✅ Display setup summary and next steps
+
+#### Step 2: Verify Setup
+
+After successful setup, verify:
+
+1. **CodeBuild Project**: Check AWS Console → CodeBuild → Projects
+2. **GitHub Webhook**: Check GitHub Repository → Settings → Webhooks
+3. **IAM Role**: Check AWS Console → IAM → Roles → `CodeBuildServiceRole-PackagePublishing`
+
+### Webhook Configuration
+
+#### Automatic Triggers
+
+The webhook is configured to trigger builds only when:
+
+- **Event**: Push to repository
+- **Branch**: `main` branch only
+- **Path**: Changes in `my-lib/**` directory only
+
+#### Webhook Filters
+
+```json
+{
+  "filterGroups": [
+    [
+      {
+        "type": "EVENT",
+        "pattern": "PUSH"
+      },
+      {
+        "type": "HEAD_REF", 
+        "pattern": "^refs/heads/main$"
+      },
+      {
+        "type": "FILE_PATH",
+        "pattern": "^my-lib/.*"
+      }
+    ]
+  ]
+}
+```
+
+#### Status Reporting
+
+CodeBuild automatically reports build status back to GitHub:
+
+- ⏳ **Pending**: When build starts
+- ✅ **Success**: When build completes successfully
+- ❌ **Failure**: When build fails
+- ⚠️ **Error**: When build encounters an error
+
+### Testing the Setup
+
+#### Method 1: Make a Test Change
+
+1. Create a test change in `my-lib/` directory:
+   ```bash
+   echo "// Test change $(date)" >> my-lib/services/index.js
+   git add my-lib/services/index.js
+   git commit -m "test: trigger webhook"
+   git push origin main
+   ```
+
+2. Check GitHub commit status for build indicator
+3. Monitor build progress in AWS CodeBuild console
+
+#### Method 2: Manual Build Trigger
+
+```bash
+# Start a manual build for testing
+aws codebuild start-build \
+  --project-name publish-packages-to-codeartifact \
+  --source-version main
+```
+
+### Webhook Troubleshooting
+
+#### Common Issues
+
+**1. Webhook Not Triggering**
+
+*Symptoms*: Push to main/my-lib doesn't trigger build
+
+*Solutions*:
+- Check GitHub webhook exists: Repository → Settings → Webhooks
+- Verify webhook URL is active (should show recent deliveries)
+- Check webhook filters match your branch and path
+- Ensure GitHub token has `admin:repo_hook` scope
+
+**2. Build Fails Immediately**
+
+*Symptoms*: Build starts but fails in pre_build phase
+
+*Solutions*:
+- Check `buildspec.yml` exists in repository root
+- Verify IAM service role has CodeArtifact permissions
+- Check AWS credentials in CodeBuild environment
+- Review CloudWatch logs for detailed error messages
+
+**3. GitHub Status Not Updating**
+
+*Symptoms*: Build runs but GitHub commit status doesn't update
+
+*Solutions*:
+- Verify GitHub token has `repo:status` scope
+- Check CodeBuild project has `reportBuildStatus: true`
+- Ensure token is not expired
+- Check CodeBuild service role permissions
+
+**4. Permission Denied Errors**
+
+*Symptoms*: AWS API calls fail with permission errors
+
+*Solutions*:
+- Review IAM service role permissions
+- Check CodeArtifact resource ARNs match your setup
+- Verify AWS account ID in configuration
+- Ensure CodeBuild service role trust policy is correct
+
+#### Debug Commands
+
+```bash
+# Check CodeBuild project details
+aws codebuild batch-get-projects --names publish-packages-to-codeartifact
+
+# List recent builds
+aws codebuild list-builds-for-project --project-name publish-packages-to-codeartifact
+
+# Get build details
+aws codebuild batch-get-builds --ids <build-id>
+
+# Check IAM role
+aws iam get-role --role-name CodeBuildServiceRole-PackagePublishing
+
+# Test GitHub token
+curl -H "Authorization: token $GITHUB_TOKEN" https://api.github.com/user
+```
+
+#### Log Locations
+
+- **CodeBuild Logs**: AWS Console → CloudWatch → Log Groups → `/aws/codebuild/publish-packages-to-codeartifact`
+- **GitHub Webhook Logs**: Repository → Settings → Webhooks → Recent Deliveries
+- **GitHub Actions Logs**: Repository → Actions → Workflow runs
+
+### Security Considerations
+
+#### GitHub Token Security
+
+- ✅ Use tokens with minimal required scopes
+- ✅ Set reasonable expiration dates (90 days max)
+- ✅ Store tokens as environment variables, not in code
+- ✅ Rotate tokens regularly
+- ❌ Never commit tokens to version control
+- ❌ Don't share tokens between projects unnecessarily
+
+#### AWS IAM Security
+
+- ✅ Use least-privilege IAM policies
+- ✅ Scope CodeArtifact permissions to specific domains/repositories
+- ✅ Enable CloudTrail for audit logging
+- ✅ Review IAM policies regularly
+- ❌ Don't use overly broad permissions like `*`
+
+#### Webhook Security
+
+- ✅ GitHub webhooks use HTTPS by default
+- ✅ CodeBuild validates webhook signatures
+- ✅ Use branch and path filters to limit triggers
+- ❌ Don't expose webhook URLs publicly
+
+### Maintenance
+
+#### Regular Tasks
+
+1. **Token Rotation** (every 90 days):
+   ```bash
+   # Update GitHub token
+   export GITHUB_TOKEN=new_token_here
+   
+   # Update CodeBuild project
+   node scripts/setup-codebuild.js
+   ```
+
+2. **Permission Review** (monthly):
+   - Review IAM service role permissions
+   - Check CodeBuild project configuration
+   - Verify webhook filters are appropriate
+
+3. **Monitoring** (ongoing):
+   - Monitor build success rates
+   - Check CloudWatch logs for errors
+   - Review GitHub webhook delivery success
+
+#### Cleanup
+
+To remove the CodeBuild setup:
+
+```bash
+# Delete CodeBuild project
+aws codebuild delete-project --name publish-packages-to-codeartifact
+
+# Delete IAM role and policy
+aws iam detach-role-policy --role-name CodeBuildServiceRole-PackagePublishing \
+  --policy-arn arn:aws:iam::ACCOUNT_ID:policy/CodeBuildPackagePublishingPolicy
+aws iam delete-role --role-name CodeBuildServiceRole-PackagePublishing
+aws iam delete-policy --policy-arn arn:aws:iam::ACCOUNT_ID:policy/CodeBuildPackagePublishingPolicy
+```
 
 ## Using the Packages
 

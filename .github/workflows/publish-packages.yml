@@ -1,20 +1,119 @@
+# GitHub Actions Workflow for CodeArtifact Package Publishing
+# 
+# This workflow runs on AWS CodeBuild managed runners for package publishing.
+# Uses CodeBuild infrastructure directly instead of GitHub-hosted runners.
+# 
+# INFRASTRUCTURE:
+# - Uses CodeBuild managed runner: codebuild-publish-packages-to-codeartifact
+# - Build Environment: Amazon Linux 2, x86_64, Standard 7.0
+# - Compute: BUILD_GENERAL1_SMALL
+# - Service Role: CodeBuildServiceRole-PackagePublishing with CodeArtifact permissions
+# 
+# AUTOMATIC TRIGGERING:
+# - Triggers on push to main branch with changes in my-lib/**
+# - Primary method should be CodeBuild webhook (faster, more direct)
+# 
+# MANUAL TRIGGERING:
+# - Use when CodeBuild webhook is not working
+# - Go to Actions tab → "Publish Packages to CodeArtifact" → "Run workflow"
+# - Options:
+#   - reason: Describe why manual trigger is needed
+#   - force_build: Build even without my-lib changes (for testing)
+# 
+# WHEN TO USE MANUAL TRIGGER:
+# - CodeBuild webhook is not responding
+# - Testing the CodeBuild managed runner
+# - Emergency package publishing
+# - Debugging build issues on CodeBuild infrastructure
+#
 name: Publish Packages to CodeArtifact
 
+# Configuration - Update these values to match your CodeBuild setup
+# These should match the values used in scripts/setup-codebuild.js
+env:
+  CODEBUILD_PROJECT_NAME: publish-packages-to-codeartifact  # Must match PROJECT_NAME in setup-codebuild.js
+  LOG_GROUP_NAME: /aws/codebuild/publish-packages-to-codeartifact
+  # CodeBuild infrastructure configuration
+  CODEBUILD_REGION: ${{ secrets.AWS_REGION }}
+  CODEBUILD_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+
 on:
+  # Primary trigger: Push to main branch with my-lib changes
   push:
     branches: [ main ]
     paths:
       - 'my-lib/**'
+  
+  # Manual/fallback trigger: Use when CodeBuild webhook is not working
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Reason for manual trigger (e.g., webhook not working, testing)'
+        required: false
+        default: 'Manual trigger'
+      force_build:
+        description: 'Force build even if no my-lib changes detected'
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   trigger-codebuild:
-    runs-on: ubuntu-latest
+    # Use CodeBuild managed runner - matches the CodeBuild project configuration
+    # This runs directly on CodeBuild infrastructure instead of GitHub-hosted runners
+    runs-on: codebuild-publish-packages-to-codeartifact-${{ github.run_id }}-${{ github.run_attempt }}
+    env:
+      # CodeBuild project configuration - matches setup-codebuild.js settings
+      CODEBUILD_PROJECT_TYPE: "LINUX_CONTAINER"
+      CODEBUILD_COMPUTE_TYPE: "BUILD_GENERAL1_SMALL"  # Matches setup-codebuild.js
+      CODEBUILD_IMAGE: "aws/codebuild/standard:7.0"   # Matches setup-codebuild.js
+      CODEBUILD_SERVICE_ROLE: "arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/CodeBuildServiceRole-PackagePublishing"
     
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        fetch-depth: 2  # Fetch previous commit for change detection
+    
+    - name: Check trigger type and validate changes
+      id: check-trigger
+      run: |
+        echo "Checking trigger type and validating changes..."
+        
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "🔧 Manual trigger detected"
+          echo "Reason: ${{ github.event.inputs.reason }}"
+          echo "Force build: ${{ github.event.inputs.force_build }}"
+          echo "trigger-type=manual" >> $GITHUB_OUTPUT
+          
+          if [ "${{ github.event.inputs.force_build }}" = "true" ]; then
+            echo "✅ Force build enabled - proceeding with build"
+            echo "should-build=true" >> $GITHUB_OUTPUT
+          else
+            echo "🔍 Checking for my-lib changes in manual trigger..."
+            if git diff --name-only HEAD~1 HEAD | grep -q "^my-lib/"; then
+              echo "✅ my-lib changes detected - proceeding with build"
+              echo "should-build=true" >> $GITHUB_OUTPUT
+            else
+              echo "⚠️  No my-lib changes detected. Use 'force_build' option to build anyway."
+              echo "should-build=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+        else
+          echo "🤖 Automatic trigger detected (push to main with my-lib changes)"
+          echo "trigger-type=automatic" >> $GITHUB_OUTPUT
+          echo "should-build=true" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Skip build notification
+      if: steps.check-trigger.outputs.should-build == 'false'
+      run: |
+        echo "⏭️  Skipping build - no my-lib changes detected"
+        echo "To force a build, re-run this workflow with 'force_build' enabled"
+        echo "Or make changes to files in the my-lib directory"
     
     - name: Configure AWS credentials
+      if: steps.check-trigger.outputs.should-build == 'true'
       uses: aws-actions/configure-aws-credentials@v4
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
@@ -22,6 +121,7 @@ jobs:
         aws-region: ${{ secrets.AWS_REGION }}
     
     - name: Verify AWS authentication
+      if: steps.check-trigger.outputs.should-build == 'true'
       run: |
         echo "Testing AWS authentication..."
         if ! aws sts get-caller-identity > /dev/null 2>&1; then
@@ -35,133 +135,104 @@ jobs:
         echo "✅ AWS authentication successful"
         aws sts get-caller-identity
     
-    - name: Start CodeBuild project
-      id: start-build
+    - name: Display CodeBuild runner configuration
+      if: steps.check-trigger.outputs.should-build == 'true'
       run: |
-        echo "Starting CodeBuild project..."
-        
-        # Check if CodeBuild project exists
-        if ! aws codebuild batch-get-projects --names publish-packages-to-codeartifact > /dev/null 2>&1; then
-          echo "❌ CodeBuild project 'publish-packages-to-codeartifact' not found."
-          echo "Please create the CodeBuild project first or check the project name."
-          exit 1
-        fi
-        
-        # Start the build with current commit SHA and branch info
-        BUILD_ID=$(aws codebuild start-build \
-          --project-name publish-packages-to-codeartifact \
-          --source-version ${{ github.sha }} \
-          --environment-variables-override \
-            name=GITHUB_SHA,value=${{ github.sha }} \
-            name=GITHUB_REF,value=${{ github.ref }} \
-            name=GITHUB_REPOSITORY,value=${{ github.repository }} \
-            name=GITHUB_ACTOR,value=${{ github.actor }} \
-          --query 'build.id' --output text)
-        
-        if [ -z "$BUILD_ID" ]; then
-          echo "❌ Failed to start CodeBuild project"
-          exit 1
-        fi
-        
-        echo "✅ CodeBuild started with ID: $BUILD_ID"
-        echo "build-id=$BUILD_ID" >> $GITHUB_OUTPUT
-        
-        # Get the build URL for easy access
-        BUILD_URL="https://console.aws.amazon.com/codesuite/codebuild/projects/publish-packages-to-codeartifact/build/$BUILD_ID"
-        echo "🔗 Build URL: $BUILD_URL"
-        echo "build-url=$BUILD_URL" >> $GITHUB_OUTPUT
+        echo "🏗️  CodeBuild Managed Runner Configuration:"
+        echo "Runner: codebuild-$CODEBUILD_PROJECT_NAME"
+        echo "Environment Type: $CODEBUILD_PROJECT_TYPE"
+        echo "Compute Type: $CODEBUILD_COMPUTE_TYPE"
+        echo "Build Image: $CODEBUILD_IMAGE"
+        echo "Service Role: $CODEBUILD_SERVICE_ROLE"
+        echo "Region: $CODEBUILD_REGION"
+        echo "Account ID: $CODEBUILD_ACCOUNT_ID"
+        echo "Running directly on CodeBuild infrastructure"
     
-    - name: Wait for CodeBuild completion
+    - name: Setup Node.js and dependencies
+      if: steps.check-trigger.outputs.should-build == 'true'
       run: |
-        BUILD_ID="${{ steps.start-build.outputs.build-id }}"
-        echo "Waiting for CodeBuild completion (ID: $BUILD_ID)..."
+        echo "🔧 Setting up Node.js environment..."
         
-        # Function to get build status
-        get_build_status() {
-          aws codebuild batch-get-builds --ids "$BUILD_ID" --query 'builds[0].buildStatus' --output text 2>/dev/null || echo "UNKNOWN"
-        }
+        # Install Node.js if not available (CodeBuild standard:7.0 includes Node.js)
+        node --version || (echo "Installing Node.js..." && curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash - && sudo apt-get install -y nodejs)
+        npm --version
         
-        # Function to get build phase info
-        get_build_phase() {
-          aws codebuild batch-get-builds --ids "$BUILD_ID" --query 'builds[0].currentPhase' --output text 2>/dev/null || echo "UNKNOWN"
-        }
+        echo "📦 Installing project dependencies..."
+        npm install
+    
+    - name: Get CodeArtifact authorization token
+      if: steps.check-trigger.outputs.should-build == 'true'
+      id: get-token
+      run: |
+        echo "🔑 Getting CodeArtifact authorization token..."
         
-        # Wait for build completion with timeout (30 minutes)
-        TIMEOUT=1800  # 30 minutes in seconds
-        ELAPSED=0
-        SLEEP_INTERVAL=30
+        # Get authorization token from CodeArtifact
+        CODEARTIFACT_AUTH_TOKEN=$(aws codeartifact get-authorization-token \
+          --domain myorg \
+          --query authorizationToken \
+          --output text)
         
-        while [ $ELAPSED -lt $TIMEOUT ]; do
-          BUILD_STATUS=$(get_build_status)
-          BUILD_PHASE=$(get_build_phase)
-          
-          case "$BUILD_STATUS" in
-            "IN_PROGRESS")
-              echo "⏳ Build in progress... (Phase: $BUILD_PHASE, Elapsed: ${ELAPSED}s)"
-              sleep $SLEEP_INTERVAL
-              ELAPSED=$((ELAPSED + SLEEP_INTERVAL))
-              ;;
-            "SUCCEEDED")
-              echo "✅ Build completed successfully!"
-              exit 0
-              ;;
-            "FAILED"|"FAULT"|"STOPPED"|"TIMED_OUT")
-              echo "❌ Build failed with status: $BUILD_STATUS"
-              echo "Getting build logs..."
-              
-              # Try to get logs from CloudWatch
-              LOG_GROUP="/aws/codebuild/publish-packages-to-codeartifact"
-              if aws logs describe-log-streams --log-group-name "$LOG_GROUP" --order-by LastEventTime --descending --max-items 1 > /dev/null 2>&1; then
-                echo "📋 Recent build logs:"
-                aws logs get-log-events \
-                  --log-group-name "$LOG_GROUP" \
-                  --log-stream-name "$BUILD_ID" \
-                  --query 'events[-20:].message' \
-                  --output text 2>/dev/null || echo "Could not retrieve logs from CloudWatch"
-              else
-                echo "⚠️  Could not access CloudWatch logs. Check IAM permissions for logs:GetLogEvents"
-              fi
-              
-              # Get build details
-              echo "📊 Build details:"
-              aws codebuild batch-get-builds --ids "$BUILD_ID" \
-                --query 'builds[0].{Status:buildStatus,StartTime:startTime,EndTime:endTime,Duration:buildComplete}' \
-                --output table 2>/dev/null || echo "Could not retrieve build details"
-              
-              exit 1
-              ;;
-            *)
-              echo "⚠️  Unknown build status: $BUILD_STATUS"
-              sleep $SLEEP_INTERVAL
-              ELAPSED=$((ELAPSED + SLEEP_INTERVAL))
-              ;;
-          esac
-        done
+        if [ -z "$CODEARTIFACT_AUTH_TOKEN" ]; then
+          echo "❌ Failed to get CodeArtifact authorization token"
+          exit 1
+        fi
         
-        echo "❌ Build timed out after $TIMEOUT seconds"
-        echo "Build URL: ${{ steps.start-build.outputs.build-url }}"
-        exit 1
+        echo "✅ CodeArtifact authorization token obtained"
+        echo "auth-token=$CODEARTIFACT_AUTH_TOKEN" >> $GITHUB_OUTPUT
+    
+    - name: Build and publish packages
+      if: steps.check-trigger.outputs.should-build == 'true'
+      run: |
+        echo "🏗️  Building and publishing packages to CodeArtifact..."
+        
+        # Navigate to my-lib directory
+        cd my-lib
+        
+        # Install dependencies for all packages
+        echo "📦 Installing dependencies for all packages..."
+        npm run install:all
+        
+        # Publish packages to CodeArtifact
+        echo "📤 Publishing packages to CodeArtifact..."
+        CODEARTIFACT_AUTH_TOKEN="${{ steps.get-token.outputs.auth-token }}" npm run publish:all
+        
+        echo "✅ Package publishing completed successfully!"
     
     - name: Report build success
-      if: success()
+      if: success() && steps.check-trigger.outputs.should-build == 'true'
       run: |
-        echo "🎉 Package publishing completed successfully!"
-        echo "Build ID: ${{ steps.start-build.outputs.build-id }}"
-        echo "Build URL: ${{ steps.start-build.outputs.build-url }}"
+        echo "🎉 Package publishing completed successfully on CodeBuild managed runner!"
+        echo "Trigger type: ${{ steps.check-trigger.outputs.trigger-type }}"
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "Manual reason: ${{ github.event.inputs.reason }}"
+        fi
+        echo "Runner: codebuild-$CODEBUILD_PROJECT_NAME"
         echo "Commit: ${{ github.sha }}"
         echo "Branch: ${{ github.ref }}"
+        echo "Repository: ${{ github.repository }}"
     
     - name: Report build failure
-      if: failure()
+      if: failure() && steps.check-trigger.outputs.should-build == 'true'
       run: |
-        echo "💥 Package publishing failed!"
-        echo "Build ID: ${{ steps.start-build.outputs.build-id }}"
-        echo "Build URL: ${{ steps.start-build.outputs.build-url }}"
+        echo "💥 Package publishing failed on CodeBuild managed runner!"
+        echo "Trigger type: ${{ steps.check-trigger.outputs.trigger-type }}"
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          echo "Manual reason: ${{ github.event.inputs.reason }}"
+        fi
+        echo "Runner: codebuild-$CODEBUILD_PROJECT_NAME"
         echo "Commit: ${{ github.sha }}"
         echo "Branch: ${{ github.ref }}"
+        echo "Repository: ${{ github.repository }}"
         echo ""
         echo "Please check:"
-        echo "1. CodeBuild project exists and is properly configured"
-        echo "2. AWS credentials have sufficient permissions"
-        echo "3. Build logs in the CodeBuild console"
+        echo "1. CodeBuild managed runner configuration"
+        echo "2. AWS credentials and CodeArtifact permissions"
+        echo "3. Package dependencies and build scripts"
+        echo "4. CodeArtifact domain and repository setup"
+        echo ""
+        echo "💡 Troubleshooting tips:"
+        echo "- Check GitHub Actions logs for detailed error messages"
+        echo "- Verify CodeArtifact authorization token generation"
+        echo "- Ensure my-lib packages have valid package.json files"
+        echo "- Check npm registry configuration"
         exit 1
