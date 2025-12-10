@@ -1,6 +1,6 @@
 {
   "name": "@myorg/database",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Tale of DDH key:value database service wrappers for AWS Lambda",
   "type": "module",
   "main": "index.js",

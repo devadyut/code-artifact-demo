@@ -1,6 +1,6 @@
 {
   "name": "@myorg/constants",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Shared constants and configuration values for Lambda functions",
   "type": "module",
   "main": "index.js",

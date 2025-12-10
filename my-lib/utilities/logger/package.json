@@ -1,6 +1,6 @@
 {
   "name": "@myorg/logger",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Centralized logging utilities for Lambda functions",
   "type": "module",
   "main": "index.js",
