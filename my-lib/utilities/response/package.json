@@ -1,6 +1,6 @@
 {
   "name": "@myorg/response",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "HTTP response utilities with CORS headers for Lambda functions",
   "type": "module",
   "main": "index.js",

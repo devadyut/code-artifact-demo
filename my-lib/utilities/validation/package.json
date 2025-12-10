@@ -1,6 +1,6 @@
 {
   "name": "@myorg/validation",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Input validation and data sanitization utilities for Lambda functions",
   "type": "module",
   "main": "index.js",
