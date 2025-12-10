@@ -331,8 +331,8 @@ jobs:
         run: |
           REGISTRY_HOST=$(echo "${{ steps.get-registry.outputs.registry-url }}" | sed 's|https://||')
           npm config set @myorg:registry ${{ steps.get-registry.outputs.registry-url }}
-          npm config set //${REGISTRY_HOST}:_authToken ${{ steps.get-token.outputs.auth-token }}
-          npm config set //${REGISTRY_HOST}:always-auth true
+          npm config set //${REGISTRY_HOST}/:_authToken ${{ steps.get-token.outputs.auth-token }}
+          npm config set //${REGISTRY_HOST}/:always-auth true
 
       - name: Log publishing phase
         run: |
@@ -423,8 +423,8 @@ jobs:
         run: |
           REGISTRY_HOST=$(echo "${{ steps.get-registry.outputs.registry-url }}" | sed 's|https://||')
           npm config set @myorg:registry ${{ steps.get-registry.outputs.registry-url }}
-          npm config set //${REGISTRY_HOST}:_authToken ${{ steps.get-token.outputs.auth-token }}
-          npm config set //${REGISTRY_HOST}:always-auth true
+          npm config set //${REGISTRY_HOST}/:_authToken ${{ steps.get-token.outputs.auth-token }}
+          npm config set //${REGISTRY_HOST}/:always-auth true
 
       - name: Log publishing phase
         run: |
@@ -512,8 +512,8 @@ jobs:
         run: |
           REGISTRY_HOST=$(echo "${{ steps.get-registry.outputs.registry-url }}" | sed 's|https://||')
           npm config set @myorg:registry ${{ steps.get-registry.outputs.registry-url }}
-          npm config set //${REGISTRY_HOST}:_authToken ${{ steps.get-token.outputs.auth-token }}
-          npm config set //${REGISTRY_HOST}:always-auth true
+          npm config set //${REGISTRY_HOST}/:_authToken ${{ steps.get-token.outputs.auth-token }}
+          npm config set //${REGISTRY_HOST}/:always-auth true
 
       - name: Log publishing phase
         run: |
@@ -608,8 +608,8 @@ jobs:
         run: |
           REGISTRY_HOST=$(echo "${{ steps.get-registry.outputs.registry-url }}" | sed 's|https://||')
           npm config set @myorg:registry ${{ steps.get-registry.outputs.registry-url }}
-          npm config set //${REGISTRY_HOST}:_authToken ${{ steps.get-token.outputs.auth-token }}
-          npm config set //${REGISTRY_HOST}:always-auth true
+          npm config set //${REGISTRY_HOST}/:_authToken ${{ steps.get-token.outputs.auth-token }}
+          npm config set //${REGISTRY_HOST}/:always-auth true
 
       - name: Log publishing phase
         run: |
@@ -710,8 +710,8 @@ jobs:
         run: |
           REGISTRY_HOST=$(echo "${{ steps.get-registry.outputs.registry-url }}" | sed 's|https://||')
           npm config set @myorg:registry ${{ steps.get-registry.outputs.registry-url }}
-          npm config set //${REGISTRY_HOST}:_authToken ${{ steps.get-token.outputs.auth-token }}
-          npm config set //${REGISTRY_HOST}:always-auth true
+          npm config set //${REGISTRY_HOST}/:_authToken ${{ steps.get-token.outputs.auth-token }}
+          npm config set //${REGISTRY_HOST}/:always-auth true
 
       - name: Log publishing phase
         run: |
