@@ -1,0 +1,167 @@
+name: Publish Packages to CodeArtifact
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - 'my-lib/**'
+
+jobs:
+  trigger-codebuild:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+    
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ secrets.AWS_REGION }}
+    
+    - name: Verify AWS authentication
+      run: |
+        echo "Testing AWS authentication..."
+        if ! aws sts get-caller-identity > /dev/null 2>&1; then
+          echo "❌ AWS authentication failed. Please check your GitHub secrets:"
+          echo "  - AWS_ACCESS_KEY_ID"
+          echo "  - AWS_SECRET_ACCESS_KEY" 
+          echo "  - AWS_REGION"
+          echo "Make sure the credentials have permissions to access CodeBuild."
+          exit 1
+        fi
+        echo "✅ AWS authentication successful"
+        aws sts get-caller-identity
+    
+    - name: Start CodeBuild project
+      id: start-build
+      run: |
+        echo "Starting CodeBuild project..."
+        
+        # Check if CodeBuild project exists
+        if ! aws codebuild batch-get-projects --names publish-packages-to-codeartifact > /dev/null 2>&1; then
+          echo "❌ CodeBuild project 'publish-packages-to-codeartifact' not found."
+          echo "Please create the CodeBuild project first or check the project name."
+          exit 1
+        fi
+        
+        # Start the build with current commit SHA and branch info
+        BUILD_ID=$(aws codebuild start-build \
+          --project-name publish-packages-to-codeartifact \
+          --source-version ${{ github.sha }} \
+          --environment-variables-override \
+            name=GITHUB_SHA,value=${{ github.sha }} \
+            name=GITHUB_REF,value=${{ github.ref }} \
+            name=GITHUB_REPOSITORY,value=${{ github.repository }} \
+            name=GITHUB_ACTOR,value=${{ github.actor }} \
+          --query 'build.id' --output text)
+        
+        if [ -z "$BUILD_ID" ]; then
+          echo "❌ Failed to start CodeBuild project"
+          exit 1
+        fi
+        
+        echo "✅ CodeBuild started with ID: $BUILD_ID"
+        echo "build-id=$BUILD_ID" >> $GITHUB_OUTPUT
+        
+        # Get the build URL for easy access
+        BUILD_URL="https://console.aws.amazon.com/codesuite/codebuild/projects/publish-packages-to-codeartifact/build/$BUILD_ID"
+        echo "🔗 Build URL: $BUILD_URL"
+        echo "build-url=$BUILD_URL" >> $GITHUB_OUTPUT
+    
+    - name: Wait for CodeBuild completion
+      run: |
+        BUILD_ID="${{ steps.start-build.outputs.build-id }}"
+        echo "Waiting for CodeBuild completion (ID: $BUILD_ID)..."
+        
+        # Function to get build status
+        get_build_status() {
+          aws codebuild batch-get-builds --ids "$BUILD_ID" --query 'builds[0].buildStatus' --output text 2>/dev/null || echo "UNKNOWN"
+        }
+        
+        # Function to get build phase info
+        get_build_phase() {
+          aws codebuild batch-get-builds --ids "$BUILD_ID" --query 'builds[0].currentPhase' --output text 2>/dev/null || echo "UNKNOWN"
+        }
+        
+        # Wait for build completion with timeout (30 minutes)
+        TIMEOUT=1800  # 30 minutes in seconds
+        ELAPSED=0
+        SLEEP_INTERVAL=30
+        
+        while [ $ELAPSED -lt $TIMEOUT ]; do
+          BUILD_STATUS=$(get_build_status)
+          BUILD_PHASE=$(get_build_phase)
+          
+          case "$BUILD_STATUS" in
+            "IN_PROGRESS")
+              echo "⏳ Build in progress... (Phase: $BUILD_PHASE, Elapsed: ${ELAPSED}s)"
+              sleep $SLEEP_INTERVAL
+              ELAPSED=$((ELAPSED + SLEEP_INTERVAL))
+              ;;
+            "SUCCEEDED")
+              echo "✅ Build completed successfully!"
+              exit 0
+              ;;
+            "FAILED"|"FAULT"|"STOPPED"|"TIMED_OUT")
+              echo "❌ Build failed with status: $BUILD_STATUS"
+              echo "Getting build logs..."
+              
+              # Try to get logs from CloudWatch
+              LOG_GROUP="/aws/codebuild/publish-packages-to-codeartifact"
+              if aws logs describe-log-streams --log-group-name "$LOG_GROUP" --order-by LastEventTime --descending --max-items 1 > /dev/null 2>&1; then
+                echo "📋 Recent build logs:"
+                aws logs get-log-events \
+                  --log-group-name "$LOG_GROUP" \
+                  --log-stream-name "$BUILD_ID" \
+                  --query 'events[-20:].message' \
+                  --output text 2>/dev/null || echo "Could not retrieve logs from CloudWatch"
+              else
+                echo "⚠️  Could not access CloudWatch logs. Check IAM permissions for logs:GetLogEvents"
+              fi
+              
+              # Get build details
+              echo "📊 Build details:"
+              aws codebuild batch-get-builds --ids "$BUILD_ID" \
+                --query 'builds[0].{Status:buildStatus,StartTime:startTime,EndTime:endTime,Duration:buildComplete}' \
+                --output table 2>/dev/null || echo "Could not retrieve build details"
+              
+              exit 1
+              ;;
+            *)
+              echo "⚠️  Unknown build status: $BUILD_STATUS"
+              sleep $SLEEP_INTERVAL
+              ELAPSED=$((ELAPSED + SLEEP_INTERVAL))
+              ;;
+          esac
+        done
+        
+        echo "❌ Build timed out after $TIMEOUT seconds"
+        echo "Build URL: ${{ steps.start-build.outputs.build-url }}"
+        exit 1
+    
+    - name: Report build success
+      if: success()
+      run: |
+        echo "🎉 Package publishing completed successfully!"
+        echo "Build ID: ${{ steps.start-build.outputs.build-id }}"
+        echo "Build URL: ${{ steps.start-build.outputs.build-url }}"
+        echo "Commit: ${{ github.sha }}"
+        echo "Branch: ${{ github.ref }}"
+    
+    - name: Report build failure
+      if: failure()
+      run: |
+        echo "💥 Package publishing failed!"
+        echo "Build ID: ${{ steps.start-build.outputs.build-id }}"
+        echo "Build URL: ${{ steps.start-build.outputs.build-url }}"
+        echo "Commit: ${{ github.sha }}"
+        echo "Branch: ${{ github.ref }}"
+        echo ""
+        echo "Please check:"
+        echo "1. CodeBuild project exists and is properly configured"
+        echo "2. AWS credentials have sufficient permissions"
+        echo "3. Build logs in the CodeBuild console"
+        exit 1
