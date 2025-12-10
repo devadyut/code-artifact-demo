@@ -1,6 +1,6 @@
 {
   "name": "@myorg/storage",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Tale of DDH object storage service wrappers for AWS Lambda",
   "type": "module",
   "main": "index.js",
