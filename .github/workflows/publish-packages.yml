@@ -180,10 +180,10 @@ jobs:
         echo "✅ CodeArtifact authorization token obtained"
         echo "auth-token=$CODEARTIFACT_AUTH_TOKEN" >> $GITHUB_OUTPUT
     
-    - name: Build and publish packages
+    - name: Build and publish packages in correct sequence
       if: steps.check-trigger.outputs.should-build == 'true'
       run: |
-        echo "🏗️  Building and publishing packages to CodeArtifact..."
+        echo "🏗️  Building and publishing packages to CodeArtifact in correct dependency order..."
         
         # Navigate to my-lib directory
         cd my-lib
@@ -192,11 +192,43 @@ jobs:
         echo "📦 Installing dependencies for all packages..."
         npm run install:all
         
-        # Publish packages to CodeArtifact
-        echo "📤 Publishing packages to CodeArtifact..."
-        CODEARTIFACT_AUTH_TOKEN="${{ steps.get-token.outputs.auth-token }}" npm run publish:all
+        # Get CodeArtifact registry URL
+        REGISTRY_URL=$(aws codeartifact get-repository-endpoint \
+          --domain myorg \
+          --repository myorg-repo \
+          --format npm \
+          --query repositoryEndpoint \
+          --output text)
         
-        echo "✅ Package publishing completed successfully!"
+        echo "📍 Registry URL: $REGISTRY_URL"
+        
+        # Step 1: Publish individual utility packages first
+        echo "📤 Step 1: Publishing individual utility packages..."
+        node scripts/publish-packages.js utilities "$REGISTRY_URL" "${{ steps.get-token.outputs.auth-token }}"
+        
+        # Step 2: Publish individual service packages
+        echo "📤 Step 2: Publishing individual service packages..."
+        node scripts/publish-packages.js services "$REGISTRY_URL" "${{ steps.get-token.outputs.auth-token }}"
+        
+        # Step 3: Wait a moment for packages to be available in registry
+        echo "⏳ Waiting for packages to be available in registry..."
+        sleep 10
+        
+        # Step 4: Publish aggregate packages (utilities and services) that depend on individual packages
+        echo "📤 Step 3: Publishing utilities aggregate package..."
+        node scripts/publish-packages.js utilities-aggregate "$REGISTRY_URL" "${{ steps.get-token.outputs.auth-token }}"
+        
+        echo "📤 Step 4: Publishing services aggregate package..."
+        node scripts/publish-packages.js services-aggregate "$REGISTRY_URL" "${{ steps.get-token.outputs.auth-token }}"
+        
+        # Step 5: Wait again and publish main package
+        echo "⏳ Waiting for aggregate packages to be available..."
+        sleep 10
+        
+        echo "📤 Step 5: Publishing main library package..."
+        node scripts/publish-packages.js main "$REGISTRY_URL" "${{ steps.get-token.outputs.auth-token }}"
+        
+        echo "✅ Package publishing completed successfully in correct sequence!"
     
     - name: Report build success
       if: success() && steps.check-trigger.outputs.should-build == 'true'

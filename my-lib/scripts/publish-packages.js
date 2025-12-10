@@ -107,7 +107,7 @@ if (!registryUrl || !authToken) {
     console.error('❌ Error: Registry URL and auth token are required');
     console.error('\nUsage:');
     console.error('  node scripts/publish-packages.js [type] [registryUrl] [authToken]');
-    console.error('  - type: all|services|utilities (default: all)');
+    console.error('  - type: all|services|utilities|services-aggregate|utilities-aggregate|main (default: all)');
     console.error('  - registryUrl: CodeArtifact registry URL');
     console.error('  - authToken: CodeArtifact authorization token');
     process.exit(1);
@@ -123,10 +123,10 @@ let publishResults = {
     skipped: []
 };
 
+// Publish individual service packages only
 if (publishType === 'all' || publishType === 'services') {
-    console.log('\n📁 Publishing service packages...');
+    console.log('\n📁 Publishing individual service packages...');
 
-    // Publish individual service packages
     const servicesDir = path.join(rootDir, 'services');
     const servicePackages = fs.readdirSync(servicesDir, { withFileTypes: true })
         .filter(dirent => dirent.isDirectory() && dirent.name !== 'node_modules')
@@ -144,8 +144,12 @@ if (publishType === 'all' || publishType === 'services') {
             publishResults.failed.push(`@myorg/${pkg.name}`);
         }
     });
+}
 
-    // Publish services aggregate
+// Publish services aggregate package (depends on individual service packages)
+if (publishType === 'all' || publishType === 'services-aggregate') {
+    console.log('\n📁 Publishing services aggregate package...');
+    
     const servicesResult = publishPackage(path.join(rootDir, 'services'), '@myorg/services', registryUrl, authToken);
     if (servicesResult.success) {
         if (servicesResult.skipped) {
@@ -158,10 +162,10 @@ if (publishType === 'all' || publishType === 'services') {
     }
 }
 
+// Publish individual utility packages only
 if (publishType === 'all' || publishType === 'utilities') {
-    console.log('\n📁 Publishing utility packages...');
+    console.log('\n📁 Publishing individual utility packages...');
 
-    // Publish individual utility packages
     const utilitiesDir = path.join(rootDir, 'utilities');
     const utilityPackages = fs.readdirSync(utilitiesDir, { withFileTypes: true })
         .filter(dirent => dirent.isDirectory() && dirent.name !== 'node_modules')
@@ -179,8 +183,12 @@ if (publishType === 'all' || publishType === 'utilities') {
             publishResults.failed.push(`@myorg/${pkg.name}`);
         }
     });
+}
 
-    // Publish utilities aggregate
+// Publish utilities aggregate package (depends on individual utility packages)
+if (publishType === 'all' || publishType === 'utilities-aggregate') {
+    console.log('\n📁 Publishing utilities aggregate package...');
+    
     const utilitiesResult = publishPackage(path.join(rootDir, 'utilities'), '@myorg/utilities', registryUrl, authToken);
     if (utilitiesResult.success) {
         if (utilitiesResult.skipped) {
@@ -193,7 +201,8 @@ if (publishType === 'all' || publishType === 'utilities') {
     }
 }
 
-if (publishType === 'all') {
+// Publish main package (depends on all other packages)
+if (publishType === 'all' || publishType === 'main') {
     console.log('\n📁 Publishing main package...');
     const mainResult = publishPackage(rootDir, '@myorg/libraries', registryUrl, authToken);
     if (mainResult.success) {
@@ -231,9 +240,15 @@ if (publishResults.failed.length > 0) {
 
 console.log('\nUsage:');
 console.log('  node scripts/publish-packages.js [type] [registryUrl] [authToken]');
-console.log('  - type: all|services|utilities (default: all)');
+console.log('  - type: all|services|utilities|services-aggregate|utilities-aggregate|main (default: all)');
 console.log('  - registryUrl: CodeArtifact registry URL');
 console.log('  - authToken: CodeArtifact authorization token');
+console.log('\nPublish sequence for dependencies:');
+console.log('  1. utilities (individual packages)');
+console.log('  2. services (individual packages)');
+console.log('  3. utilities-aggregate (depends on individual utilities)');
+console.log('  4. services-aggregate (depends on individual services)');
+console.log('  5. main (depends on all packages)');
 
 // Exit with error code if any packages failed
 if (publishResults.failed.length > 0) {
