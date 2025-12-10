@@ -1,6 +1,6 @@
 {
   "name": "@myorg/error",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Standardized error handling utilities for Lambda functions",
   "type": "module",
   "main": "index.js",
