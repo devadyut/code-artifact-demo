@@ -17,8 +17,8 @@
 # - Use when CodeBuild webhook is not working
 # - Go to Actions tab → "Publish Packages to CodeArtifact" → "Run workflow"
 # - Options:
-#   - reason: Describe why manual trigger is needed
-#   - force_build: Build even without my-lib changes (for testing)
+#   - package_scope: Choose what to publish (individual-only, aggregate-and-above, main-only, full-pipeline)
+#   - force_publish: Force publish even without detected changes
 # 
 # WHEN TO USE MANUAL TRIGGER:
 # - CodeBuild webhook is not responding
@@ -47,224 +47,734 @@ on:
   # Manual/fallback trigger: Use when CodeBuild webhook is not working
   workflow_dispatch:
     inputs:
-      reason:
-        description: 'Reason for manual trigger (e.g., webhook not working, testing)'
-        required: false
-        default: 'Manual trigger'
-      force_build:
-        description: 'Force build even if no my-lib changes detected'
-        type: boolean
+      package_scope:
+        description: 'Publishing scope'
+        required: true
+        default: 'full-pipeline'
+        type: choice
+        options:
+          - individual-only
+          - aggregate-and-above
+          - main-only
+          - full-pipeline
+      force_publish:
+        description: 'Force publish even without detected changes'
         required: false
         default: false
+        type: boolean
+
+permissions:
+  contents: read
 
 jobs:
-  trigger-codebuild:
-    # Use CodeBuild managed runner - matches the CodeBuild project configuration
-    # This runs directly on CodeBuild infrastructure instead of GitHub-hosted runners
-    runs-on: codebuild-publish-packages-to-codeartifact-${{ github.run_id }}-${{ github.run_attempt }}
-    env:
-      # CodeBuild project configuration - matches setup-codebuild.js settings
-      CODEBUILD_PROJECT_TYPE: "LINUX_CONTAINER"
-      CODEBUILD_COMPUTE_TYPE: "BUILD_GENERAL1_SMALL"  # Matches setup-codebuild.js
-      CODEBUILD_IMAGE: "aws/codebuild/standard:7.0"   # Matches setup-codebuild.js
-      CODEBUILD_SERVICE_ROLE: "arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/CodeBuildServiceRole-PackagePublishing"
-    
+  detect-changes:
+    runs-on: codebuild-publish-packages-to-codeartifact-${{ github.run_id }}-${{ github.run_attempt }}-detect
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    outputs:
+      services-changed: ${{ steps.changes.outputs.services }}
+      utilities-changed: ${{ steps.changes.outputs.utilities }}
+      individual-services: ${{ steps.individual-changes.outputs.services }}
+      individual-utilities: ${{ steps.individual-changes.outputs.utilities }}
+      should-publish-services-aggregate: ${{ steps.dependency-chain.outputs.should-publish-services-aggregate }}
+      should-publish-utilities-aggregate: ${{ steps.dependency-chain.outputs.should-publish-utilities-aggregate }}
+      should-publish-main-package: ${{ steps.dependency-chain.outputs.should-publish-main-package }}
+      publishing-scope: ${{ steps.dependency-chain.outputs.publishing-scope }}
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        fetch-depth: 2  # Fetch previous commit for change detection
-    
-    - name: Check trigger type and validate changes
-      id: check-trigger
-      run: |
-        echo "Checking trigger type and validating changes..."
-        
-        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-          echo "🔧 Manual trigger detected"
-          echo "Reason: ${{ github.event.inputs.reason }}"
-          echo "Force build: ${{ github.event.inputs.force_build }}"
-          echo "trigger-type=manual" >> $GITHUB_OUTPUT
-          
-          if [ "${{ github.event.inputs.force_build }}" = "true" ]; then
-            echo "✅ Force build enabled - proceeding with build"
-            echo "should-build=true" >> $GITHUB_OUTPUT
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Detect package changes
+        id: changes
+        run: |
+          # Handle force publish scenario for manual dispatch
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ "${{ github.event.inputs.force_publish }}" == "true" ]; then
+            echo "Force publish enabled - including all packages"
+            echo "services=true" >> $GITHUB_OUTPUT
+            echo "utilities=true" >> $GITHUB_OUTPUT
           else
-            echo "🔍 Checking for my-lib changes in manual trigger..."
-            if git diff --name-only HEAD~1 HEAD | grep -q "^my-lib/"; then
-              echo "✅ my-lib changes detected - proceeding with build"
-              echo "should-build=true" >> $GITHUB_OUTPUT
+            # Check for changes in services and utilities directories
+            if git diff --name-only HEAD~1 HEAD | grep -q '^my-lib/services/'; then
+              echo "services=true" >> $GITHUB_OUTPUT
             else
-              echo "⚠️  No my-lib changes detected. Use 'force_build' option to build anyway."
-              echo "should-build=false" >> $GITHUB_OUTPUT
+              echo "services=false" >> $GITHUB_OUTPUT
+            fi
+            
+            if git diff --name-only HEAD~1 HEAD | grep -q '^my-lib/utilities/'; then
+              echo "utilities=true" >> $GITHUB_OUTPUT
+            else
+              echo "utilities=false" >> $GITHUB_OUTPUT
             fi
           fi
-        else
-          echo "🤖 Automatic trigger detected (push to main with my-lib changes)"
-          echo "trigger-type=automatic" >> $GITHUB_OUTPUT
-          echo "should-build=true" >> $GITHUB_OUTPUT
-        fi
-    
-    - name: Skip build notification
-      if: steps.check-trigger.outputs.should-build == 'false'
-      run: |
-        echo "⏭️  Skipping build - no my-lib changes detected"
-        echo "To force a build, re-run this workflow with 'force_build' enabled"
-        echo "Or make changes to files in the my-lib directory"
-    
-    - name: Configure AWS credentials
-      if: steps.check-trigger.outputs.should-build == 'true'
-      uses: aws-actions/configure-aws-credentials@v4
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ secrets.AWS_REGION }}
-    
-    - name: Verify AWS authentication
-      if: steps.check-trigger.outputs.should-build == 'true'
-      run: |
-        echo "Testing AWS authentication..."
-        if ! aws sts get-caller-identity > /dev/null 2>&1; then
-          echo "❌ AWS authentication failed. Please check your GitHub secrets:"
-          echo "  - AWS_ACCESS_KEY_ID"
-          echo "  - AWS_SECRET_ACCESS_KEY" 
-          echo "  - AWS_REGION"
-          echo "Make sure the credentials have permissions to access CodeBuild."
-          exit 1
-        fi
-        echo "✅ AWS authentication successful"
-        aws sts get-caller-identity
-    
-    - name: Display CodeBuild runner configuration
-      if: steps.check-trigger.outputs.should-build == 'true'
-      run: |
-        echo "🏗️  CodeBuild Managed Runner Configuration:"
-        echo "Runner: codebuild-$CODEBUILD_PROJECT_NAME"
-        echo "Environment Type: $CODEBUILD_PROJECT_TYPE"
-        echo "Compute Type: $CODEBUILD_COMPUTE_TYPE"
-        echo "Build Image: $CODEBUILD_IMAGE"
-        echo "Service Role: $CODEBUILD_SERVICE_ROLE"
-        echo "Region: $CODEBUILD_REGION"
-        echo "Account ID: $CODEBUILD_ACCOUNT_ID"
-        echo "Running directly on CodeBuild infrastructure"
-    
-    - name: Setup Node.js and dependencies
-      if: steps.check-trigger.outputs.should-build == 'true'
-      run: |
-        echo "🔧 Setting up Node.js environment..."
-        
-        # Install Node.js if not available (CodeBuild standard:7.0 includes Node.js)
-        node --version || (echo "Installing Node.js..." && curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash - && sudo apt-get install -y nodejs)
-        npm --version
-        
-        echo "📦 Installing project dependencies..."
-        npm install
-    
-    - name: Get CodeArtifact authorization token
-      if: steps.check-trigger.outputs.should-build == 'true'
-      id: get-token
-      run: |
-        echo "🔑 Getting CodeArtifact authorization token..."
-        
-        # Get authorization token from CodeArtifact
-        CODEARTIFACT_AUTH_TOKEN=$(aws codeartifact get-authorization-token \
-          --domain myorg \
-          --query authorizationToken \
-          --output text)
-        
-        if [ -z "$CODEARTIFACT_AUTH_TOKEN" ]; then
-          echo "❌ Failed to get CodeArtifact authorization token"
-          exit 1
-        fi
-        
-        echo "✅ CodeArtifact authorization token obtained"
-        echo "auth-token=$CODEARTIFACT_AUTH_TOKEN" >> $GITHUB_OUTPUT
-    
-    - name: Build and publish packages in correct sequence
-      if: steps.check-trigger.outputs.should-build == 'true'
-      run: |
-        echo "🏗️  Building and publishing packages to CodeArtifact in correct dependency order..."
-        
-        # Navigate to my-lib directory
-        cd my-lib
-        
-        # Install dependencies for all packages
-        echo "📦 Installing dependencies for all packages..."
-        npm run install:all
-        
-        # Get CodeArtifact registry URL
-        REGISTRY_URL=$(aws codeartifact get-repository-endpoint \
-          --domain myorg \
-          --repository myorg-repo \
-          --format npm \
-          --query repositoryEndpoint \
-          --output text)
-        
-        echo "📍 Registry URL: $REGISTRY_URL"
-        
-        # Step 1: Publish individual utility packages first
-        echo "📤 Step 1: Publishing individual utility packages..."
-        node scripts/publish-packages.js utilities "$REGISTRY_URL" "${{ steps.get-token.outputs.auth-token }}"
-        
-        # Step 2: Publish individual service packages
-        echo "📤 Step 2: Publishing individual service packages..."
-        node scripts/publish-packages.js services "$REGISTRY_URL" "${{ steps.get-token.outputs.auth-token }}"
-        
-        # Step 3: Wait a moment for packages to be available in registry
-        echo "⏳ Waiting for packages to be available in registry..."
-        sleep 10
-        
-        # Step 4: Publish aggregate packages (utilities and services) that depend on individual packages
-        echo "📤 Step 3: Publishing utilities aggregate package..."
-        node scripts/publish-packages.js utilities-aggregate "$REGISTRY_URL" "${{ steps.get-token.outputs.auth-token }}"
-        
-        echo "📤 Step 4: Publishing services aggregate package..."
-        node scripts/publish-packages.js services-aggregate "$REGISTRY_URL" "${{ steps.get-token.outputs.auth-token }}"
-        
-        # Step 5: Wait again and publish main package
-        echo "⏳ Waiting for aggregate packages to be available..."
-        sleep 10
-        
-        echo "📤 Step 5: Publishing main library package..."
-        node scripts/publish-packages.js main "$REGISTRY_URL" "${{ steps.get-token.outputs.auth-token }}"
-        
-        echo "✅ Package publishing completed successfully in correct sequence!"
-    
-    - name: Report build success
-      if: success() && steps.check-trigger.outputs.should-build == 'true'
-      run: |
-        echo "🎉 Package publishing completed successfully on CodeBuild managed runner!"
-        echo "Trigger type: ${{ steps.check-trigger.outputs.trigger-type }}"
-        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-          echo "Manual reason: ${{ github.event.inputs.reason }}"
-        fi
-        echo "Runner: codebuild-$CODEBUILD_PROJECT_NAME"
-        echo "Commit: ${{ github.sha }}"
-        echo "Branch: ${{ github.ref }}"
-        echo "Repository: ${{ github.repository }}"
-    
-    - name: Report build failure
-      if: failure() && steps.check-trigger.outputs.should-build == 'true'
-      run: |
-        echo "💥 Package publishing failed on CodeBuild managed runner!"
-        echo "Trigger type: ${{ steps.check-trigger.outputs.trigger-type }}"
-        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-          echo "Manual reason: ${{ github.event.inputs.reason }}"
-        fi
-        echo "Runner: codebuild-$CODEBUILD_PROJECT_NAME"
-        echo "Commit: ${{ github.sha }}"
-        echo "Branch: ${{ github.ref }}"
-        echo "Repository: ${{ github.repository }}"
-        echo ""
-        echo "Please check:"
-        echo "1. CodeBuild managed runner configuration"
-        echo "2. AWS credentials and CodeArtifact permissions"
-        echo "3. Package dependencies and build scripts"
-        echo "4. CodeArtifact domain and repository setup"
-        echo ""
-        echo "💡 Troubleshooting tips:"
-        echo "- Check GitHub Actions logs for detailed error messages"
-        echo "- Verify CodeArtifact authorization token generation"
-        echo "- Ensure my-lib packages have valid package.json files"
-        echo "- Check npm registry configuration"
-        exit 1
+      - name: Detect individual package changes
+        id: individual-changes
+        run: |
+          # Handle force publish scenario for manual dispatch
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ "${{ github.event.inputs.force_publish }}" == "true" ]; then
+            echo "Force publish enabled - including all packages"
+            SERVICES_JSON='["database","storage"]'
+            UTILITIES_JSON='["array","constants","date","error","logger","middleware","response","validation"]'
+          else
+            # Detect changed service packages (exclude root package.json)
+            SERVICES=$(git diff --name-only HEAD~1 HEAD | grep '^my-lib/services/' | grep -v '^my-lib/services/package\.json' | cut -d'/' -f3 | sort -u | tr '\n' ' ')
+            if [ -n "$SERVICES" ]; then
+              SERVICES_JSON=$(echo "$SERVICES" | sed 's/ *$//' | sed 's/ /","/g' | sed 's/^/["/' | sed 's/$/"]/')
+            else
+              # If no individual changes detected but services changed, publish all services
+              if [ "${{ steps.changes.outputs.services }}" == "true" ]; then
+                SERVICES_JSON='["database","storage"]'
+              else
+                SERVICES_JSON="[]"
+              fi
+            fi
+            
+            # Detect changed utility packages (exclude root package.json)
+            UTILITIES=$(git diff --name-only HEAD~1 HEAD | grep '^my-lib/utilities/' | grep -v '^my-lib/utilities/package\.json' | cut -d'/' -f3 | sort -u | tr '\n' ' ')
+            if [ -n "$UTILITIES" ]; then
+              UTILITIES_JSON=$(echo "$UTILITIES" | sed 's/ *$//' | sed 's/ /","/g' | sed 's/^/["/' | sed 's/$/"]/')
+            else
+              # If no individual changes detected but utilities changed, publish all utilities
+              if [ "${{ steps.changes.outputs.utilities }}" == "true" ]; then
+                UTILITIES_JSON='["array","constants","date","error","logger","middleware","response","validation"]'
+              else
+                UTILITIES_JSON="[]"
+              fi
+            fi
+          fi
+          
+          echo "services=$SERVICES_JSON" >> $GITHUB_OUTPUT
+          echo "utilities=$UTILITIES_JSON" >> $GITHUB_OUTPUT
+      - name: Log detected packages
+        run: |
+          echo "=========================================="
+          echo "📋 PACKAGE DETECTION SUMMARY"
+          echo "=========================================="
+          echo "🔄 Trigger: ${{ github.event_name }}"
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "📦 Scope: ${{ github.event.inputs.package_scope }}"
+            echo "🔧 Force publish: ${{ github.event.inputs.force_publish }}"
+          fi
+          echo ""
+          echo "📊 Services to publish:"
+          echo '${{ steps.individual-changes.outputs.services }}' | jq -r '.[]' | sed 's/^/   - @myorg\//' || echo "   - None"
+          echo ""
+          echo "📊 Utilities to publish:"
+          echo '${{ steps.individual-changes.outputs.utilities }}' | jq -r '.[]' | sed 's/^/   - @myorg\//' || echo "   - None"
+          echo ""
+          echo "🎯 Services changed: ${{ steps.changes.outputs.services }}"
+          echo "🎯 Utilities changed: ${{ steps.changes.outputs.utilities }}"
+          echo "=========================================="
+
+      - name: Determine dependency chain requirements
+        id: dependency-chain
+        run: |
+          # Determine what should be published based on changes and trigger type
+          SERVICES_CHANGED="${{ steps.changes.outputs.services }}"
+          UTILITIES_CHANGED="${{ steps.changes.outputs.utilities }}"
+          INDIVIDUAL_SERVICES='${{ steps.individual-changes.outputs.services }}'
+          INDIVIDUAL_UTILITIES='${{ steps.individual-changes.outputs.utilities }}'
+          
+          echo "=========================================="
+          echo "🔗 DEPENDENCY CHAIN ANALYSIS"
+          echo "=========================================="
+          
+          # Initialize flags
+          PUBLISH_SERVICES_AGGREGATE="false"
+          PUBLISH_UTILITIES_AGGREGATE="false"
+          PUBLISH_MAIN_PACKAGE="false"
+          PUBLISHING_SCOPE="none"
+          if [ "${{ github.event_name }}" == "push" ]; then
+            echo "📋 Trigger: Push to main branch"
+            
+            # For push events, determine scope based on actual changes
+            if [ "$INDIVIDUAL_SERVICES" != "[]" ] || [ "$SERVICES_CHANGED" == "true" ]; then
+              PUBLISH_SERVICES_AGGREGATE="true"
+              PUBLISH_MAIN_PACKAGE="true"
+              if [ "$PUBLISHING_SCOPE" == "none" ]; then
+                PUBLISHING_SCOPE="services-and-above"
+              else
+                PUBLISHING_SCOPE="full-pipeline"
+              fi
+              echo "✅ Services changes detected - will publish services aggregate and main package"
+            fi
+            
+            if [ "$INDIVIDUAL_UTILITIES" != "[]" ] || [ "$UTILITIES_CHANGED" == "true" ]; then
+              PUBLISH_UTILITIES_AGGREGATE="true"
+              PUBLISH_MAIN_PACKAGE="true"
+              if [ "$PUBLISHING_SCOPE" == "none" ]; then
+                PUBLISHING_SCOPE="utilities-and-above"
+              elif [ "$PUBLISHING_SCOPE" == "services-and-above" ]; then
+                PUBLISHING_SCOPE="full-pipeline"
+              fi
+              echo "✅ Utilities changes detected - will publish utilities aggregate and main package"
+            fi
+            
+          elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "📋 Trigger: Manual workflow dispatch"
+            echo "📦 Requested scope: ${{ github.event.inputs.package_scope }}"
+            
+            # For manual dispatch, respect the selected scope
+            case "${{ github.event.inputs.package_scope }}" in
+              "individual-only")
+                PUBLISHING_SCOPE="individual-only"
+                echo "🎯 Scope: Individual packages only"
+                ;;
+              "aggregate-and-above")
+                PUBLISH_SERVICES_AGGREGATE="true"
+                PUBLISH_UTILITIES_AGGREGATE="true"
+                PUBLISH_MAIN_PACKAGE="true"
+                PUBLISHING_SCOPE="aggregate-and-above"
+                echo "🎯 Scope: Aggregate packages and main package"
+                ;;
+              "main-only")
+                PUBLISH_MAIN_PACKAGE="true"
+                PUBLISHING_SCOPE="main-only"
+                echo "🎯 Scope: Main package only"
+                ;;
+              "full-pipeline")
+                PUBLISH_SERVICES_AGGREGATE="true"
+                PUBLISH_UTILITIES_AGGREGATE="true"
+                PUBLISH_MAIN_PACKAGE="true"
+                PUBLISHING_SCOPE="full-pipeline"
+                echo "🎯 Scope: Full publishing pipeline"
+                ;;
+            esac
+          fi
+          # Set outputs
+          echo "should-publish-services-aggregate=$PUBLISH_SERVICES_AGGREGATE" >> $GITHUB_OUTPUT
+          echo "should-publish-utilities-aggregate=$PUBLISH_UTILITIES_AGGREGATE" >> $GITHUB_OUTPUT
+          echo "should-publish-main-package=$PUBLISH_MAIN_PACKAGE" >> $GITHUB_OUTPUT
+          echo "publishing-scope=$PUBLISHING_SCOPE" >> $GITHUB_OUTPUT
+          
+          echo ""
+          echo "📊 DEPENDENCY CHAIN DECISIONS:"
+          echo "   Services aggregate: $PUBLISH_SERVICES_AGGREGATE"
+          echo "   Utilities aggregate: $PUBLISH_UTILITIES_AGGREGATE"
+          echo "   Main package: $PUBLISH_MAIN_PACKAGE"
+          echo "   Publishing scope: $PUBLISHING_SCOPE"
+          echo "=========================================="
+
+  publish-individual-services:
+    name: "Publish Individual Services"
+    needs: detect-changes
+    if: |
+      (github.event_name == 'push' && 
+       (needs.detect-changes.outputs.individual-services != '[]' || 
+        (needs.detect-changes.outputs.services-changed == 'true' && needs.detect-changes.outputs.individual-services == '[]'))) ||
+      (github.event_name == 'workflow_dispatch' && 
+       (github.event.inputs.package_scope == 'individual-only' || 
+        github.event.inputs.package_scope == 'aggregate-and-above' || 
+        github.event.inputs.package_scope == 'full-pipeline') &&
+       (needs.detect-changes.outputs.individual-services != '[]' || github.event.inputs.force_publish == 'true'))
+    runs-on: codebuild-publish-packages-to-codeartifact-${{ github.run_id }}-${{ github.run_attempt }}-services
+    strategy:
+      fail-fast: false
+      matrix:
+        service: ${{ fromJson(needs.detect-changes.outputs.individual-services) }}
+    outputs:
+      individual-services-status: ${{ job.status }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+      - name: Get CodeArtifact authorization token
+        id: get-token
+        run: |
+          echo "🔑 Getting CodeArtifact authorization token..."
+          CODEARTIFACT_AUTH_TOKEN=$(aws codeartifact get-authorization-token \
+            --domain myorg \
+            --query authorizationToken \
+            --output text)
+          
+          if [ -z "$CODEARTIFACT_AUTH_TOKEN" ]; then
+            echo "❌ Failed to get CodeArtifact authorization token"
+            exit 1
+          fi
+          
+          echo "✅ CodeArtifact authorization token obtained"
+          echo "auth-token=$CODEARTIFACT_AUTH_TOKEN" >> $GITHUB_OUTPUT
+
+      - name: Get CodeArtifact registry URL
+        id: get-registry
+        run: |
+          REGISTRY_URL=$(aws codeartifact get-repository-endpoint \
+            --domain myorg \
+            --repository myorg-repo \
+            --format npm \
+            --query repositoryEndpoint \
+            --output text)
+          echo "registry-url=$REGISTRY_URL" >> $GITHUB_OUTPUT
+
+      - name: Configure npm for CodeArtifact
+        run: |
+          REGISTRY_HOST=$(echo "${{ steps.get-registry.outputs.registry-url }}" | sed 's|https://||')
+          npm config set @myorg:registry ${{ steps.get-registry.outputs.registry-url }}
+          npm config set //${REGISTRY_HOST}:_authToken ${{ steps.get-token.outputs.auth-token }}
+          npm config set //${REGISTRY_HOST}:always-auth true
+
+      - name: Log publishing phase
+        run: |
+          echo "=========================================="
+          echo "🚀 PHASE 1: INDIVIDUAL SERVICES PUBLISHING"
+          echo "=========================================="
+          echo "📦 Publishing individual service: ${{ matrix.service }}"
+          echo "📋 Package: @myorg/${{ matrix.service }}"
+          echo "🔄 Trigger: ${{ github.event_name }}"
+          echo "📅 Started at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "=========================================="
+
+      - name: Install dependencies
+        run: |
+          cd my-lib/services/${{ matrix.service }}
+          echo "Installing dependencies for @myorg/${{ matrix.service }}"
+          npm install
+
+      - name: Publish individual service
+        id: publish
+        run: |
+          cd my-lib/services/${{ matrix.service }}
+          echo "Publishing @myorg/${{ matrix.service }}"
+          npm publish
+          echo "✅ Successfully published @myorg/${{ matrix.service }}"
+  publish-individual-utilities:
+    name: "Publish Individual Utilities"
+    needs: detect-changes
+    if: |
+      (github.event_name == 'push' && 
+       (needs.detect-changes.outputs.individual-utilities != '[]' || 
+        (needs.detect-changes.outputs.utilities-changed == 'true' && needs.detect-changes.outputs.individual-utilities == '[]'))) ||
+      (github.event_name == 'workflow_dispatch' && 
+       (github.event.inputs.package_scope == 'individual-only' || 
+        github.event.inputs.package_scope == 'aggregate-and-above' || 
+        github.event.inputs.package_scope == 'full-pipeline') &&
+       (needs.detect-changes.outputs.individual-utilities != '[]' || github.event.inputs.force_publish == 'true'))
+    runs-on: codebuild-publish-packages-to-codeartifact-${{ github.run_id }}-${{ github.run_attempt }}-utilities
+    strategy:
+      fail-fast: false
+      matrix:
+        utility: ${{ fromJson(needs.detect-changes.outputs.individual-utilities) }}
+    outputs:
+      individual-utilities-status: ${{ job.status }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Get CodeArtifact authorization token
+        id: get-token
+        run: |
+          echo "🔑 Getting CodeArtifact authorization token..."
+          CODEARTIFACT_AUTH_TOKEN=$(aws codeartifact get-authorization-token \
+            --domain myorg \
+            --query authorizationToken \
+            --output text)
+          
+          if [ -z "$CODEARTIFACT_AUTH_TOKEN" ]; then
+            echo "❌ Failed to get CodeArtifact authorization token"
+            exit 1
+          fi
+          
+          echo "✅ CodeArtifact authorization token obtained"
+          echo "auth-token=$CODEARTIFACT_AUTH_TOKEN" >> $GITHUB_OUTPUT
+      - name: Get CodeArtifact registry URL
+        id: get-registry
+        run: |
+          REGISTRY_URL=$(aws codeartifact get-repository-endpoint \
+            --domain myorg \
+            --repository myorg-repo \
+            --format npm \
+            --query repositoryEndpoint \
+            --output text)
+          echo "registry-url=$REGISTRY_URL" >> $GITHUB_OUTPUT
+
+      - name: Configure npm for CodeArtifact
+        run: |
+          REGISTRY_HOST=$(echo "${{ steps.get-registry.outputs.registry-url }}" | sed 's|https://||')
+          npm config set @myorg:registry ${{ steps.get-registry.outputs.registry-url }}
+          npm config set //${REGISTRY_HOST}:_authToken ${{ steps.get-token.outputs.auth-token }}
+          npm config set //${REGISTRY_HOST}:always-auth true
+
+      - name: Log publishing phase
+        run: |
+          echo "=========================================="
+          echo "🚀 PHASE 1: INDIVIDUAL UTILITIES PUBLISHING"
+          echo "=========================================="
+          echo "📦 Publishing individual utility: ${{ matrix.utility }}"
+          echo "📋 Package: @myorg/${{ matrix.utility }}"
+          echo "🔄 Trigger: ${{ github.event_name }}"
+          echo "📅 Started at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "=========================================="
+
+      - name: Install dependencies
+        run: |
+          cd my-lib/utilities/${{ matrix.utility }}
+          echo "Installing dependencies for @myorg/${{ matrix.utility }}"
+          npm install
+
+      - name: Publish individual utility
+        id: publish
+        run: |
+          cd my-lib/utilities/${{ matrix.utility }}
+          echo "Publishing @myorg/${{ matrix.utility }}"
+          npm publish
+          echo "✅ Successfully published @myorg/${{ matrix.utility }}"
+  publish-services-aggregate:
+    name: "Publish Services Aggregate"
+    needs: [detect-changes, publish-individual-services]
+    if: |
+      always() && 
+      (needs.publish-individual-services.result == 'success' || needs.publish-individual-services.result == 'skipped') &&
+      ((github.event_name == 'push' && 
+        (needs.detect-changes.outputs.services-changed == 'true' || 
+         needs.detect-changes.outputs.individual-services != '[]')) ||
+       (github.event_name == 'workflow_dispatch' && 
+        (github.event.inputs.package_scope == 'aggregate-and-above' || 
+         github.event.inputs.package_scope == 'full-pipeline') &&
+        (needs.detect-changes.outputs.services-changed == 'true' || github.event.inputs.force_publish == 'true')))
+    runs-on: codebuild-publish-packages-to-codeartifact-${{ github.run_id }}-${{ github.run_attempt }}-services-agg
+    outputs:
+      services-aggregate-status: ${{ job.status }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Get CodeArtifact authorization token
+        id: get-token
+        run: |
+          echo "🔑 Getting CodeArtifact authorization token..."
+          CODEARTIFACT_AUTH_TOKEN=$(aws codeartifact get-authorization-token \
+            --domain myorg \
+            --query authorizationToken \
+            --output text)
+          
+          if [ -z "$CODEARTIFACT_AUTH_TOKEN" ]; then
+            echo "❌ Failed to get CodeArtifact authorization token"
+            exit 1
+          fi
+          
+          echo "✅ CodeArtifact authorization token obtained"
+          echo "auth-token=$CODEARTIFACT_AUTH_TOKEN" >> $GITHUB_OUTPUT
+
+      - name: Get CodeArtifact registry URL
+        id: get-registry
+        run: |
+          REGISTRY_URL=$(aws codeartifact get-repository-endpoint \
+            --domain myorg \
+            --repository myorg-repo \
+            --format npm \
+            --query repositoryEndpoint \
+            --output text)
+          echo "registry-url=$REGISTRY_URL" >> $GITHUB_OUTPUT
+      - name: Configure npm for CodeArtifact
+        run: |
+          REGISTRY_HOST=$(echo "${{ steps.get-registry.outputs.registry-url }}" | sed 's|https://||')
+          npm config set @myorg:registry ${{ steps.get-registry.outputs.registry-url }}
+          npm config set //${REGISTRY_HOST}:_authToken ${{ steps.get-token.outputs.auth-token }}
+          npm config set //${REGISTRY_HOST}:always-auth true
+
+      - name: Log publishing phase
+        run: |
+          echo "=========================================="
+          echo "🚀 PHASE 2: AGGREGATE SERVICES PUBLISHING"
+          echo "=========================================="
+          echo "📦 Publishing services aggregate package"
+          echo "📋 Package: @myorg/services"
+          echo "✅ Prerequisites: Individual services publishing completed (${{ needs.publish-individual-services.result }})"
+          echo "📊 Individual services published: ${{ needs.detect-changes.outputs.individual-services }}"
+          echo "🔄 Trigger: ${{ github.event_name }}"
+          echo "📅 Started at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "=========================================="
+
+      - name: Wait for individual packages availability
+        run: |
+          echo "Waiting briefly for individual packages to be available in registry..."
+          sleep 10
+
+      - name: Install dependencies
+        run: |
+          cd my-lib/services
+          echo "Installing dependencies for @myorg/services aggregate"
+          npm install
+
+      - name: Build and publish services aggregate
+        id: publish
+        run: |
+          cd my-lib/services
+          echo "Publishing @myorg/services aggregate package"
+          npm publish
+          echo "✅ Successfully published @myorg/services aggregate"
+  publish-utilities-aggregate:
+    name: "Publish Utilities Aggregate"
+    needs: [detect-changes, publish-individual-utilities]
+    if: |
+      always() && 
+      (needs.publish-individual-utilities.result == 'success' || needs.publish-individual-utilities.result == 'skipped') &&
+      ((github.event_name == 'push' && 
+        (needs.detect-changes.outputs.utilities-changed == 'true' || 
+         needs.detect-changes.outputs.individual-utilities != '[]')) ||
+       (github.event_name == 'workflow_dispatch' && 
+        (github.event.inputs.package_scope == 'aggregate-and-above' || 
+         github.event.inputs.package_scope == 'full-pipeline') &&
+        (needs.detect-changes.outputs.utilities-changed == 'true' || github.event.inputs.force_publish == 'true')))
+    runs-on: codebuild-publish-packages-to-codeartifact-${{ github.run_id }}-${{ github.run_attempt }}-utilities-agg
+    outputs:
+      utilities-aggregate-status: ${{ job.status }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Get CodeArtifact authorization token
+        id: get-token
+        run: |
+          echo "🔑 Getting CodeArtifact authorization token..."
+          CODEARTIFACT_AUTH_TOKEN=$(aws codeartifact get-authorization-token \
+            --domain myorg \
+            --query authorizationToken \
+            --output text)
+          
+          if [ -z "$CODEARTIFACT_AUTH_TOKEN" ]; then
+            echo "❌ Failed to get CodeArtifact authorization token"
+            exit 1
+          fi
+          
+          echo "✅ CodeArtifact authorization token obtained"
+          echo "auth-token=$CODEARTIFACT_AUTH_TOKEN" >> $GITHUB_OUTPUT
+
+      - name: Get CodeArtifact registry URL
+        id: get-registry
+        run: |
+          REGISTRY_URL=$(aws codeartifact get-repository-endpoint \
+            --domain myorg \
+            --repository myorg-repo \
+            --format npm \
+            --query repositoryEndpoint \
+            --output text)
+          echo "registry-url=$REGISTRY_URL" >> $GITHUB_OUTPUT
+      - name: Configure npm for CodeArtifact
+        run: |
+          REGISTRY_HOST=$(echo "${{ steps.get-registry.outputs.registry-url }}" | sed 's|https://||')
+          npm config set @myorg:registry ${{ steps.get-registry.outputs.registry-url }}
+          npm config set //${REGISTRY_HOST}:_authToken ${{ steps.get-token.outputs.auth-token }}
+          npm config set //${REGISTRY_HOST}:always-auth true
+
+      - name: Log publishing phase
+        run: |
+          echo "=========================================="
+          echo "🚀 PHASE 2: AGGREGATE UTILITIES PUBLISHING"
+          echo "=========================================="
+          echo "📦 Publishing utilities aggregate package"
+          echo "📋 Package: @myorg/utilities"
+          echo "✅ Prerequisites: Individual utilities publishing completed (${{ needs.publish-individual-utilities.result }})"
+          echo "📊 Individual utilities published: ${{ needs.detect-changes.outputs.individual-utilities }}"
+          echo "🔄 Trigger: ${{ github.event_name }}"
+          echo "📅 Started at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "=========================================="
+
+      - name: Wait for individual packages availability
+        run: |
+          echo "Waiting briefly for individual packages to be available in registry..."
+          sleep 10
+
+      - name: Install dependencies
+        run: |
+          cd my-lib/utilities
+          echo "Installing dependencies for @myorg/utilities aggregate"
+          npm install
+
+      - name: Build and publish utilities aggregate
+        id: publish
+        run: |
+          cd my-lib/utilities
+          echo "Publishing @myorg/utilities aggregate package"
+          npm publish
+          echo "✅ Successfully published @myorg/utilities aggregate"
+  publish-main-package:
+    name: "Publish Main Package"
+    needs: [detect-changes, publish-services-aggregate, publish-utilities-aggregate]
+    if: |
+      always() && 
+      (
+        (needs.publish-services-aggregate.result == 'success' && needs.publish-utilities-aggregate.result == 'success') ||
+        (needs.publish-services-aggregate.result == 'success' && needs.publish-utilities-aggregate.result == 'skipped') ||
+        (needs.publish-services-aggregate.result == 'skipped' && needs.publish-utilities-aggregate.result == 'success')
+      ) &&
+      ((github.event_name == 'push' && 
+        (needs.detect-changes.outputs.services-changed == 'true' || 
+         needs.detect-changes.outputs.utilities-changed == 'true' ||
+         needs.detect-changes.outputs.individual-services != '[]' ||
+         needs.detect-changes.outputs.individual-utilities != '[]')) ||
+       (github.event_name == 'workflow_dispatch' && 
+        (github.event.inputs.package_scope == 'main-only' || 
+         github.event.inputs.package_scope == 'full-pipeline') &&
+        (needs.detect-changes.outputs.services-changed == 'true' || needs.detect-changes.outputs.utilities-changed == 'true' || github.event.inputs.force_publish == 'true')))
+    runs-on: codebuild-publish-packages-to-codeartifact-${{ github.run_id }}-${{ github.run_attempt }}-main
+    outputs:
+      main-package-status: ${{ job.status }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Get CodeArtifact authorization token
+        id: get-token
+        run: |
+          echo "🔑 Getting CodeArtifact authorization token..."
+          CODEARTIFACT_AUTH_TOKEN=$(aws codeartifact get-authorization-token \
+            --domain myorg \
+            --query authorizationToken \
+            --output text)
+          
+          if [ -z "$CODEARTIFACT_AUTH_TOKEN" ]; then
+            echo "❌ Failed to get CodeArtifact authorization token"
+            exit 1
+          fi
+          
+          echo "✅ CodeArtifact authorization token obtained"
+          echo "auth-token=$CODEARTIFACT_AUTH_TOKEN" >> $GITHUB_OUTPUT
+      - name: Get CodeArtifact registry URL
+        id: get-registry
+        run: |
+          REGISTRY_URL=$(aws codeartifact get-repository-endpoint \
+            --domain myorg \
+            --repository myorg-repo \
+            --format npm \
+            --query repositoryEndpoint \
+            --output text)
+          echo "registry-url=$REGISTRY_URL" >> $GITHUB_OUTPUT
+
+      - name: Configure npm for CodeArtifact
+        run: |
+          REGISTRY_HOST=$(echo "${{ steps.get-registry.outputs.registry-url }}" | sed 's|https://||')
+          npm config set @myorg:registry ${{ steps.get-registry.outputs.registry-url }}
+          npm config set //${REGISTRY_HOST}:_authToken ${{ steps.get-token.outputs.auth-token }}
+          npm config set //${REGISTRY_HOST}:always-auth true
+
+      - name: Log publishing phase
+        run: |
+          echo "=========================================="
+          echo "🚀 PHASE 3: MAIN PACKAGE PUBLISHING"
+          echo "=========================================="
+          echo "📦 Publishing main package"
+          echo "📋 Package: @myorg/libraries"
+          echo "✅ Prerequisites:"
+          echo "   - Services aggregate: ${{ needs.publish-services-aggregate.result }}"
+          echo "   - Utilities aggregate: ${{ needs.publish-utilities-aggregate.result }}"
+          echo "🔄 Trigger: ${{ github.event_name }}"
+          echo "📅 Started at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "=========================================="
+
+      - name: Verify aggregate publishing prerequisites
+        run: |
+          SERVICES_STATUS="${{ needs.publish-services-aggregate.result }}"
+          UTILITIES_STATUS="${{ needs.publish-utilities-aggregate.result }}"
+          
+          echo "Verifying aggregate publishing prerequisites..."
+          
+          if [ "$SERVICES_STATUS" == "failure" ] || [ "$UTILITIES_STATUS" == "failure" ]; then
+            echo "❌ Cannot publish main package: One or more aggregate packages failed to publish"
+            echo "Services aggregate: $SERVICES_STATUS"
+            echo "Utilities aggregate: $UTILITIES_STATUS"
+            exit 1
+          fi
+          
+          if [ "$SERVICES_STATUS" == "success" ] || [ "$UTILITIES_STATUS" == "success" ]; then
+            echo "✅ Prerequisites met: At least one aggregate package published successfully"
+            echo "Services aggregate: $SERVICES_STATUS"
+            echo "Utilities aggregate: $UTILITIES_STATUS"
+          else
+            echo "❌ Cannot publish main package: No aggregate packages were published successfully"
+            exit 1
+          fi
+      - name: Wait for aggregate packages availability
+        run: |
+          echo "Waiting for aggregate packages to be available in registry..."
+          sleep 15
+
+      - name: Install dependencies
+        run: |
+          cd my-lib
+          echo "Installing dependencies for @myorg/libraries main package"
+          npm install
+
+      - name: Publish main package
+        id: publish
+        run: |
+          cd my-lib
+          echo "Publishing @myorg/libraries main package"
+          npm publish
+          echo "✅ Successfully published @myorg/libraries main package"
+
+      - name: Log completion status
+        if: always()
+        run: |
+          if [ "${{ steps.publish.outcome }}" == "success" ]; then
+            echo "✅ Main package publishing completed successfully"
+            echo "🎉 Full publishing pipeline completed!"
+          else
+            echo "❌ Main package publishing failed"
+            exit 1
+          fi
