@@ -329,7 +329,7 @@ jobs:
 
       - name: Configure npm for CodeArtifact
         run: |
-          REGISTRY_HOST=$(echo "${{ steps.get-registry.outputs.registry-url }}" | sed 's|https://||')
+          REGISTRY_HOST=$(echo "${{ steps.get-registry.outputs.registry-url }}" | sed 's|https://||' | sed 's|/$||')
           echo "@myorg:registry=${{ steps.get-registry.outputs.registry-url }}" >> ~/.npmrc
           echo "//${REGISTRY_HOST}/:_authToken=${{ steps.get-token.outputs.auth-token }}" >> ~/.npmrc
 
@@ -420,7 +420,7 @@ jobs:
 
       - name: Configure npm for CodeArtifact
         run: |
-          REGISTRY_HOST=$(echo "${{ steps.get-registry.outputs.registry-url }}" | sed 's|https://||')
+          REGISTRY_HOST=$(echo "${{ steps.get-registry.outputs.registry-url }}" | sed 's|https://||' | sed 's|/$||')
           echo "@myorg:registry=${{ steps.get-registry.outputs.registry-url }}" >> ~/.npmrc
           echo "//${REGISTRY_HOST}/:_authToken=${{ steps.get-token.outputs.auth-token }}" >> ~/.npmrc
 
@@ -508,7 +508,7 @@ jobs:
           echo "registry-url=$REGISTRY_URL" >> $GITHUB_OUTPUT
       - name: Configure npm for CodeArtifact
         run: |
-          REGISTRY_HOST=$(echo "${{ steps.get-registry.outputs.registry-url }}" | sed 's|https://||')
+          REGISTRY_HOST=$(echo "${{ steps.get-registry.outputs.registry-url }}" | sed 's|https://||' | sed 's|/$||')
           echo "@myorg:registry=${{ steps.get-registry.outputs.registry-url }}" >> ~/.npmrc
           echo "//${REGISTRY_HOST}/:_authToken=${{ steps.get-token.outputs.auth-token }}" >> ~/.npmrc
 
@@ -603,7 +603,7 @@ jobs:
           echo "registry-url=$REGISTRY_URL" >> $GITHUB_OUTPUT
       - name: Configure npm for CodeArtifact
         run: |
-          REGISTRY_HOST=$(echo "${{ steps.get-registry.outputs.registry-url }}" | sed 's|https://||')
+          REGISTRY_HOST=$(echo "${{ steps.get-registry.outputs.registry-url }}" | sed 's|https://||' | sed 's|/$||')
           echo "@myorg:registry=${{ steps.get-registry.outputs.registry-url }}" >> ~/.npmrc
           echo "//${REGISTRY_HOST}/:_authToken=${{ steps.get-token.outputs.auth-token }}" >> ~/.npmrc
 
@@ -704,7 +704,7 @@ jobs:
 
       - name: Configure npm for CodeArtifact
         run: |
-          REGISTRY_HOST=$(echo "${{ steps.get-registry.outputs.registry-url }}" | sed 's|https://||')
+          REGISTRY_HOST=$(echo "${{ steps.get-registry.outputs.registry-url }}" | sed 's|https://||' | sed 's|/$||')
           echo "@myorg:registry=${{ steps.get-registry.outputs.registry-url }}" >> ~/.npmrc
           echo "//${REGISTRY_HOST}/:_authToken=${{ steps.get-token.outputs.auth-token }}" >> ~/.npmrc
 
