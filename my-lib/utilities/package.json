@@ -1,6 +1,6 @@
 {
   "name": "@myorg/utilities",
-  "version": "0.1.2",
+  "version": "0.2.0",
   "description": "Aggregate package for all utility libraries",
   "type": "module",
   "main": "index.js",
@@ -15,14 +15,14 @@
     "aggregate"
   ],
   "dependencies": {
-    "@myorg/response": "^0.1.2",
-    "@myorg/date": "^0.1.2",
-    "@myorg/array": "^0.1.2",
-    "@myorg/error": "^0.1.2",
-    "@myorg/logger": "^0.1.2",
-    "@myorg/middleware": "^0.1.2",
-    "@myorg/constants": "^0.1.2",
-    "@myorg/validation": "^0.1.2"
+    "@myorg/response": "^0.2.0",
+    "@myorg/date": "^0.2.0",
+    "@myorg/array": "^0.2.0",
+    "@myorg/error": "^0.2.0",
+    "@myorg/logger": "^0.2.0",
+    "@myorg/middleware": "^0.2.0",
+    "@myorg/constants": "^0.2.0",
+    "@myorg/validation": "^0.2.0"
   },
   "devDependencies": {
     "jest": "^29.0.0"
