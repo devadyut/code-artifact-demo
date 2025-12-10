@@ -68,7 +68,7 @@ permissions:
 
 jobs:
   detect-changes:
-    runs-on: codebuild-publish-packages-to-codeartifact-${{ github.run_id }}-${{ github.run_attempt }}-detect
+    runs-on: codebuild-publish-packages-to-codeartifact-${{ github.run_id }}-${{ github.run_attempt }}
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     outputs:
       services-changed: ${{ steps.changes.outputs.services }}
