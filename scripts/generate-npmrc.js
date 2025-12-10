@@ -36,7 +36,6 @@ function formatNpmrcContent(registryUrl, authToken, scope) {
     `${normalizedScope}:registry=${registryUrl}`,
     ``,
     `# Authentication token`,
-    `//${registryHost}/:always-auth=true`,
     `//${registryHost}/:_authToken=${authToken}`,
     ``
   ].join('\n');

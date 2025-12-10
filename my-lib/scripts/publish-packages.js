@@ -20,8 +20,7 @@ function createTemporaryNpmrc(registryUrl, authToken) {
     const registryHost = registryUrl.replace(/^https?:\/\//, '');
     
     const npmrcContent = `@myorg:registry=${registryUrl}
-//${registryHost}/:_authToken=${authToken}
-//${registryHost}/:always-auth=true`;
+//${registryHost}/:_authToken=${authToken}`;
     
     fs.writeFileSync(npmrcPath, npmrcContent, { mode: 0o600 });
     return npmrcPath;
