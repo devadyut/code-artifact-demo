@@ -24,7 +24,6 @@ provider:
   name: aws
   runtime: ${env:RUNTIME, 'nodejs22.x'}
   endpointType: ${env:ENDPOINT_TYPE, 'regional'}
-  profile: ${env:APP_NAME, 'taleofddh'}
 
   # you can overwrite defaults here
   stage: ${opt:stage, 'dev'}
@@ -32,9 +31,9 @@ provider:
   environment:
     ENVIRONMENT: ${opt:stage, self:provider.stage}
     REGION: ${opt:region, 'eu-west-1'}
-    APP_NAME: ${env:APP_NAME, 'taleofddh'}
+    APP_NAME: ${env:APP_NAME, 'myapp'}
     SERVICE_NAME: ${env:SERVICE_NAME, 'core'}
-    S3_BUCKET: ${env:S3_BUCKET, 'taleofddh-data'}
+    S3_BUCKET: ${env:S3_BUCKET, 'myapp-api-data'}
 
   apiGateway:
     shouldStartNameWithService: true
@@ -54,12 +53,12 @@ provider:
       Action:
         - s3:ListBucket
       Resource:
-        - arn:aws:s3:::${env:S3_BUCKET, 'taleofddh-data'}
+        - arn:aws:s3:::${env:S3_BUCKET, 'myapp-api-data'}
     - Effect: "Allow"
       Action:
         - s3:GetObject
       Resource:
-        - arn:aws:s3:::${env:S3_BUCKET, 'taleofddh-data'}/*
+        - arn:aws:s3:::${env:S3_BUCKET, 'myapp-api-data'}/*
 
 # you can define service wide environment variables here
 #  environment:
@@ -224,14 +223,14 @@ plugins:
 custom:
   stage: ${opt:stage, self:provider.stage}
   domains:
-    prod: ${env:API_DOMAIN, 'api.taleofddh.com'}
-    dev: ${self:custom.stage}-${env:API_DOMAIN, 'api.taleofddh.com'}
+    prod: ${env:API_DOMAIN, 'api.devadyut.people.aws.dev'}
+    dev: ${self:custom.stage}-${env:API_DOMAIN, 'api.tdevadyut.people.aws.dev'}
   customDomain:
     domainName: ${self:custom.domains.${self:custom.stage}}
     basePath: ${env:BASE_PATH, 'core'}
     stage: ${self:custom.stage}
-    certificateName: ${env:CERTIFICATE_NAME, '*.taleofddh.com'}
-    hostedZoneId: ${env:HOSTED_ZONE_ID, 'Z044305914KLOWN7PAF5E'}
+    certificateName: ${env:CERTIFICATE_NAME, '*.devadyut.people.aws.dev'}
+    hostedZoneId: ${env:HOSTED_ZONE_ID, 'Z004685643ED6CKCT5XF'}
     createRoute53Record: true
     endpointType: ${env:ENDPOINT_TYPE, 'regional'}
     securityPolicy: ${env:SECURITY_POLICY, 'tls_1_2'}

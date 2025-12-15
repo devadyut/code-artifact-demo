@@ -24,7 +24,6 @@ provider:
   name: aws
   runtime: ${env:RUNTIME, 'nodejs22.x'}
   endpointType: ${env:ENDPOINT_TYPE, 'regional'}
-  profile: ${env:APP_NAME, 'taleofddh'}
 
   # you can overwrite defaults here
   stage: ${opt:stage, 'dev'}
@@ -32,7 +31,7 @@ provider:
   environment:
     ENVIRONMENT: ${opt:stage, self:provider.stage}
     REGION: ${opt:region, 'eu-west-1'}
-    APP_NAME: ${env:APP_NAME, 'taleofddh'}
+    APP_NAME: ${env:APP_NAME, 'myapp'}
     SERVICE_NAME: ${env:SERVICE_NAME, 'auth'}
 
   apiGateway:
@@ -59,7 +58,7 @@ provider:
         - dynamodb:BatchWriteItem
         - dynamodb:PutItem
         - dynamodb:UpdateItem
-      Resource: arn:aws:dynamodb:*:*:table/${self:provider.stage}.${env:APP_NAME, 'taleofddh'}.${self:service}.*
+      Resource: arn:aws:dynamodb:*:*:table/${self:provider.stage}.${env:APP_NAME, 'myapp'}.${self:service}.*
 
 # you can define service wide environment variables here
 #  environment:
@@ -117,14 +116,14 @@ plugins:
 custom:
   stage: ${opt:stage, self:provider.stage}
   domains:
-    prod: ${env:API_DOMAIN, 'api.taleofddh.com'}
-    dev: ${self:custom.stage}-${env:API_DOMAIN, 'api.taleofddh.com'}
+    prod: ${env:API_DOMAIN, 'api.tdevadyut.people.aws.dev'}
+    dev: ${self:custom.stage}-${env:API_DOMAIN, 'api.devadyut.people.aws.dev'}
   customDomain:
     domainName: ${self:custom.domains.${self:custom.stage}}
     basePath: ${env:BASE_PATH, 'auth'}
     stage: ${self:custom.stage}
-    certificateName: ${env:CERTIFICATE_NAME, '*.taleofddh.com'}
-    hostedZoneId: ${env:HOSTED_ZONE_ID, 'Z044305914KLOWN7PAF5E'}
+    certificateName: ${env:CERTIFICATE_NAME, '*.devadyut.people.aws.dev'}
+    hostedZoneId: ${env:HOSTED_ZONE_ID, 'Z004685643ED6CKCT5XF'}
     createRoute53Record: true
     endpointType: ${env:ENDPOINT_TYPE, 'regional'}
     securityPolicy: ${env:SECURITY_POLICY, 'tls_1_2'}

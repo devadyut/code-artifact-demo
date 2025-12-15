@@ -23,8 +23,8 @@
   "dependencies": {
     "@fast-csv/format": "^5.0.5",
     "@fast-csv/parse": "^5.0.5",
-    "@myorg/database": "^0.0.1",
-    "@myorg/response": "^0.0.1",
+    "@myorg/database": "^0.4.0",
+    "@myorg/response": "^0.4.0",
     "dotenv": "^17.2.3",
     "fast-csv": "^5.0.5"
   },
