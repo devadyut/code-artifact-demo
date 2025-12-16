@@ -669,6 +669,20 @@ The GitHub Actions workflow serves as a backup when CodeBuild webhook isn't work
 
 For detailed setup instructions, see the [GitHub Webhook Setup](#github-webhook-setup) section below.
 
+### CodeBuild Runner Project Limitation
+
+**Important Note**: AWS CodeBuild API has a limitation where you cannot programmatically create or update projects as "Runner" projects through the `CreateProjectCommand` or `UpdateProjectCommand`. The project type parameter is not exposed in the AWS SDK.
+
+**Workaround Process**:
+1. Run the setup script to create a Standard CodeBuild project: `node scripts/setup-codebuild.js`
+2. Manually convert to Runner project via AWS Console:
+   - Go to AWS Console → CodeBuild → Projects
+   - Select your project → Edit → Environment
+   - Change "Compute type" from Standard to Runner
+   - Save changes
+
+This hybrid approach allows you to automate most of the setup while handling the Runner conversion manually when needed.
+
 ### AWS CodeBuild (Basic Setup)
 
 The `buildspec.yml` file provides a complete example for AWS CodeBuild integration:

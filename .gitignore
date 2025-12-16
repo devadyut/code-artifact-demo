@@ -34,3 +34,7 @@ Thumbs.db
 dist/
 build/
 *.tgz
+
+# Serverless Framework
+.serverless/
+**/.serverless/

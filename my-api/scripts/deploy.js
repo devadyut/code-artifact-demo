@@ -1,13 +1,30 @@
 #!/usr/bin/env node
 
-import { discoverModules, executeCommand, logWithColor, validateEnvironment } from './utils.js';
+/**
+ * Serverless API Deployment Script
+ * 
+ * Compatible with:
+ * - AWS SDK v3 (prioritizes direct credentials over profiles)
+ * - Node.js 22+
+ * - Serverless Framework v4
+ * 
+ * Credential Priority (updated for production compatibility):
+ * 1. AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY (recommended for all environments)
+ * 2. AWS_PROFILE (fallback for dev/uat only, not supported in production)
+ * 
+ * Required Environment Variables:
+ * - AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY (production required, recommended for all)
+ * - AWS_REGION or AWS_DEFAULT_REGION
+ * - SERVERLESS_ACCESS_KEY (Serverless Framework v4 authentication)
+ */
+
+import { discoverModules, executeCommand, logWithColor } from './utils.js';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 /**
  * Deploy all Lambda modules to specified environment
@@ -223,7 +240,7 @@ class DeploymentManager {
             }
         }
 
-        // For dev/uat, use file hash-based change detection
+        // For dev, use file hash-based change detection
         const currentHash = this.calculateModuleHash(module.path);
         const previousHash = previousModuleState.fileHash;
 
@@ -242,73 +259,123 @@ class DeploymentManager {
     validateDeploymentEnvironment() {
         logWithColor(`\n🔍 Validating deployment environment for stage: ${this.stage}`, 'cyan');
 
-        // Check AWS credentials based on deployment stage
-        const hasProfile = process.env.AWS_PROFILE;
+        // Determine if this is a development or production environment
+        const isDevelopmentEnvironment = this.stage === 'dev' || this.stage === 'uat';
+        const isProductionEnvironment = this.stage === 'prod';
+
+        // Check AWS credentials - prioritize direct credentials over profiles
         const hasDirectCredentials = process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY;
+        const hasProfile = process.env.AWS_PROFILE;
 
-        if (this.stage === 'prod') {
-            // Production requires direct AWS credentials (no profile)
-            if (!hasDirectCredentials) {
-                logWithColor('\n❌ Production deployment requires direct AWS credentials', 'red');
-                logWithColor('Please ensure AWS credentials are set via:', 'yellow');
-                logWithColor('  CI/CD (GitHub Actions):', 'cyan');
-                logWithColor('    - AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY secrets', 'blue');
-                logWithColor('  Local production deployment:', 'cyan');
-                logWithColor('    - export AWS_ACCESS_KEY_ID=your_access_key', 'blue');
-                logWithColor('    - export AWS_SECRET_ACCESS_KEY=your_secret_key', 'blue');
-                logWithColor('\n⚠️  AWS_PROFILE is not supported for production deployments', 'yellow');
-                return false;
+        // Validate that both AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are present if one is provided
+        if (process.env.AWS_ACCESS_KEY_ID && !process.env.AWS_SECRET_ACCESS_KEY) {
+            logWithColor('\n❌ AWS_ACCESS_KEY_ID is set but AWS_SECRET_ACCESS_KEY is missing', 'red');
+            logWithColor('Both AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be provided together', 'yellow');
+            return false;
+        }
+        if (process.env.AWS_SECRET_ACCESS_KEY && !process.env.AWS_ACCESS_KEY_ID) {
+            logWithColor('\n❌ AWS_SECRET_ACCESS_KEY is set but AWS_ACCESS_KEY_ID is missing', 'red');
+            logWithColor('Both AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY must be provided together', 'yellow');
+            return false;
+        }
+
+        // Credential priority: direct credentials over AWS profiles
+        if (hasDirectCredentials) {
+            logWithColor('✅ Using direct AWS credentials (AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY)', 'green');
+            if (isDevelopmentEnvironment) {
+                logWithColor('💡 Direct credentials detected in development environment - excellent for consistency!', 'blue');
             }
-            logWithColor('✅ Using direct AWS credentials for production', 'green');
+        } else if (hasProfile && isDevelopmentEnvironment) {
+            // Allow profile fallback for development environments (dev, uat)
+            logWithColor(`✅ Using AWS Profile: ${process.env.AWS_PROFILE}`, 'green');
+            logWithColor('💡 Consider using direct credentials (AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY) for consistency across environments', 'yellow');
         } else {
-            // Development/UAT allows both profile and direct credentials
-            if (!hasProfile && !hasDirectCredentials) {
-                logWithColor('\n❌ AWS credentials not configured properly', 'red');
-                logWithColor('Please ensure AWS credentials are set via:', 'yellow');
-                logWithColor('  Local development (recommended):', 'cyan');
-                logWithColor('    - AWS_PROFILE=taleofddh', 'blue');
-                logWithColor('    - AWS CLI configuration (~/.aws/credentials)', 'blue');
-                logWithColor('  Alternative:', 'cyan');
-                logWithColor('    - AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY', 'blue');
-                return false;
-            }
-
-            if (hasProfile) {
-                logWithColor(`✅ Using AWS Profile: ${process.env.AWS_PROFILE}`, 'green');
+            // No valid credentials found
+            logWithColor('\n❌ AWS credentials not configured properly', 'red');
+            logWithColor('Please ensure AWS credentials are set via:', 'yellow');
+            
+            if (isProductionEnvironment) {
+                logWithColor('  Production deployment (required):', 'cyan');
+                logWithColor('    - AWS_ACCESS_KEY_ID=your_access_key', 'blue');
+                logWithColor('    - AWS_SECRET_ACCESS_KEY=your_secret_key', 'blue');
+                logWithColor('  CI/CD (GitHub Actions):', 'cyan');
+                logWithColor('    - Add AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY as GitHub secrets', 'blue');
+                logWithColor('\n⚠️  AWS_PROFILE is not supported for production deployments', 'yellow');
             } else {
-                logWithColor('✅ Using direct AWS credentials', 'green');
+                logWithColor('  Recommended (all environments):', 'cyan');
+                logWithColor('    - AWS_ACCESS_KEY_ID=your_access_key', 'blue');
+                logWithColor('    - AWS_SECRET_ACCESS_KEY=your_secret_key', 'blue');
+                logWithColor('  Alternative (development environments only):', 'cyan');
+                logWithColor('    - AWS_PROFILE=myapp', 'blue');
+                logWithColor('    - AWS CLI configuration (~/.aws/credentials)', 'blue');
             }
+            return false;
+        }
+
+        // Validate AWS region is set (required for AWS SDK v3)
+        const hasRegion = process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION;
+        if (!hasRegion) {
+            logWithColor('\n❌ AWS region not configured', 'red');
+            logWithColor('Please set AWS region via:', 'yellow');
+            logWithColor('  Environment variable:', 'cyan');
+            logWithColor('    - AWS_REGION=us-east-1', 'blue');
+            logWithColor('    - AWS_DEFAULT_REGION=us-east-1', 'blue');
+            logWithColor('  CI/CD (GitHub Actions):', 'cyan');
+            logWithColor('    - Add AWS_REGION to GitHub Secrets or workflow environment', 'blue');
+            return false;
+        } else {
+            logWithColor(`✅ AWS Region configured: ${hasRegion}`, 'green');
         }
 
         // Check Serverless Framework authentication for v4
         const hasServerlessAccessKey = process.env.SERVERLESS_ACCESS_KEY;
         if (!hasServerlessAccessKey) {
             logWithColor('\n❌ Serverless Framework v4 authentication not configured', 'red');
+            logWithColor('Serverless Framework v4 requires authentication for deployments.', 'yellow');
             logWithColor('Please ensure SERVERLESS_ACCESS_KEY is set:', 'yellow');
             logWithColor('  Local development:', 'cyan');
             logWithColor('    - SERVERLESS_ACCESS_KEY=your_access_key', 'blue');
             logWithColor('    - Get your access key from: https://app.serverless.com/', 'blue');
             logWithColor('  CI/CD (GitHub Actions):', 'cyan');
             logWithColor('    - Add SERVERLESS_ACCESS_KEY to GitHub Secrets', 'blue');
+            logWithColor('\n💡 This is required for AWS SDK v3 compatibility with Serverless Framework v4', 'blue');
             return false;
         } else {
-            logWithColor('✅ Serverless Framework access key configured', 'green');
+            logWithColor('✅ Serverless Framework v4 access key configured', 'green');
         }
 
         // Validate stage parameter
-        const validStages = ['dev', 'prod', 'uat'];
+        const validStages = ['dev', 'prod'];
         if (!validStages.includes(this.stage)) {
             logWithColor(`\n❌ Invalid stage: ${this.stage}`, 'red');
             logWithColor(`Valid stages are: ${validStages.join(', ')}`, 'yellow');
             return false;
         }
 
-        // Check if serverless CLI is available
+        // Check if serverless CLI is available and compatible
         const serverlessCheck = executeCommand('serverless --version', process.cwd(), true);
         if (!serverlessCheck.success) {
             logWithColor('\n❌ Serverless Framework not found', 'red');
-            logWithColor('Please install serverless globally: npm install -g serverless', 'yellow');
+            logWithColor('Please install Serverless Framework v4 globally:', 'yellow');
+            logWithColor('  npm install -g serverless@4', 'blue');
+            logWithColor('\n💡 Serverless Framework v4 is required for AWS SDK v3 and Node.js 22 compatibility', 'blue');
             return false;
+        } else {
+            // Extract version information for compatibility check
+            const versionOutput = serverlessCheck.output;
+            if (versionOutput && versionOutput.includes('Framework Core:')) {
+                const versionMatch = versionOutput.match(/Framework Core: (\d+)\./);
+                if (versionMatch) {
+                    const majorVersion = parseInt(versionMatch[1]);
+                    if (majorVersion < 4) {
+                        logWithColor('\n⚠️  Serverless Framework v3 or older detected', 'yellow');
+                        logWithColor('For optimal AWS SDK v3 and Node.js 22 compatibility, consider upgrading:', 'yellow');
+                        logWithColor('  npm install -g serverless@4', 'blue');
+                    } else {
+                        logWithColor(`✅ Serverless Framework v${majorVersion} detected (AWS SDK v3 compatible)`, 'green');
+                    }
+                }
+            }
         }
 
         // Authenticate with Serverless Framework v4
@@ -356,10 +423,13 @@ class DeploymentManager {
                     success: true,
                     duration: duration,
                     endpoints: endpoints,
+                    endpointCount: endpoints.length,
                     stage: this.stage,
                     deployedAt: new Date().toISOString(),
                     gitCommit: this.getCurrentGitCommit(),
-                    fileHash: this.calculateModuleHash(module.path).hash
+                    fileHash: this.calculateModuleHash(module.path).hash,
+                    deploymentOutput: result.output ? result.output.substring(0, 1000) : '', // First 1000 chars for debugging
+                    hasApiGateway: endpoints.length > 0
                 };
 
                 this.deploymentResults.push(deployResult);
@@ -367,14 +437,20 @@ class DeploymentManager {
 
             } else {
                 logWithColor(`  ❌ ${module.name} deployment failed`, 'red');
-                logWithColor(`  Error: ${result.error}`, 'red');
+                
+                // Enhanced error message for credential-related failures
+                const errorMessage = result.error || 'Unknown deployment error';
+                const enhancedError = this.enhanceErrorMessage(errorMessage);
+                logWithColor(`  Error: ${enhancedError}`, 'red');
 
                 const deployResult = {
                     module: module.name,
                     success: false,
                     duration: duration,
-                    error: result.error,
-                    stage: this.stage
+                    error: enhancedError,
+                    stage: this.stage,
+                    deploymentOutput: result.error ? result.error.substring(0, 1000) : '', // First 1000 chars for debugging
+                    failureCategory: this.categorizeError(errorMessage)
                 };
 
                 this.deploymentResults.push(deployResult);
@@ -384,14 +460,19 @@ class DeploymentManager {
         } catch (error) {
             const duration = Date.now() - startTime;
             logWithColor(`  ❌ ${module.name} deployment failed with exception`, 'red');
-            logWithColor(`  Error: ${error.message}`, 'red');
+            
+            // Enhanced error message for exceptions
+            const enhancedError = this.enhanceErrorMessage(error.message);
+            logWithColor(`  Error: ${enhancedError}`, 'red');
 
             const deployResult = {
                 module: module.name,
                 success: false,
                 duration: duration,
-                error: error.message,
-                stage: this.stage
+                error: enhancedError,
+                stage: this.stage,
+                deploymentOutput: error.message ? error.message.substring(0, 1000) : '', // First 1000 chars for debugging
+                failureCategory: this.categorizeError(error.message)
             };
 
             this.deploymentResults.push(deployResult);
@@ -400,7 +481,130 @@ class DeploymentManager {
     }
 
     /**
-     * Extract API Gateway endpoints from serverless deploy output
+     * Categorize errors for better reporting and troubleshooting
+     */
+    categorizeError(errorMessage) {
+        if (!errorMessage) return 'unknown';
+        
+        const errorLower = errorMessage.toLowerCase();
+        
+        if (errorLower.includes('credential') || errorLower.includes('unauthorized') || 
+            errorLower.includes('access denied') || errorLower.includes('invalid credentials')) {
+            return 'credentials';
+        }
+        
+        if (errorLower.includes('region') && (errorLower.includes('invalid') || errorLower.includes('not found'))) {
+            return 'region';
+        }
+        
+        if (errorLower.includes('serverless') || errorLower.includes('framework')) {
+            return 'serverless';
+        }
+        
+        if (errorLower.includes('permission') || errorLower.includes('forbidden') || errorLower.includes('not authorized')) {
+            return 'permissions';
+        }
+        
+        if (errorLower.includes('cloudformation') || errorLower.includes('stack')) {
+            return 'cloudformation';
+        }
+        
+        if (errorLower.includes('lambda')) {
+            return 'lambda';
+        }
+        
+        if (errorLower.includes('api gateway') || errorLower.includes('apigateway')) {
+            return 'apigateway';
+        }
+        
+        return 'unknown';
+    }
+
+    /**
+     * Enhance error messages for better debugging, especially credential-related issues
+     */
+    enhanceErrorMessage(originalError) {
+        const errorLower = originalError.toLowerCase();
+        const isDevelopmentEnvironment = this.stage === 'dev' || this.stage === 'uat';
+        const isProductionEnvironment = this.stage === 'prod';
+        
+        // AWS credential-related errors
+        if (errorLower.includes('unable to locate credentials') || 
+            errorLower.includes('credentialserror') ||
+            errorLower.includes('no credentials') ||
+            errorLower.includes('invalid credentials') ||
+            errorLower.includes('the security token included in the request is invalid')) {
+            
+            let guidance = `${originalError}\n\n💡 Credential Issue Detected:\n`;
+            
+            if (isProductionEnvironment) {
+                guidance += `   - Production deployment requires direct AWS credentials\n` +
+                           `   - Set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY environment variables\n` +
+                           `   - AWS_PROFILE is not supported in production environments\n` +
+                           `   - For CI/CD: Add credentials as GitHub secrets`;
+            } else if (isDevelopmentEnvironment) {
+                guidance += `   - Development environment supports multiple authentication methods:\n` +
+                           `   - Recommended: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY\n` +
+                           `   - Alternative: AWS_PROFILE with configured AWS CLI credentials\n` +
+                           `   - Ensure both AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are set together`;
+            }
+            
+            guidance += `\n   - Verify credentials have necessary permissions for Lambda, API Gateway, and CloudFormation\n` +
+                       `   - Check if credentials are expired or invalid`;
+            
+            return guidance;
+        }
+        
+        // AWS region-related errors
+        if (errorLower.includes('region') && (errorLower.includes('invalid') || errorLower.includes('not found'))) {
+            return `${originalError}\n\n💡 Region Issue Detected:\n` +
+                   `   - Ensure AWS_REGION or AWS_DEFAULT_REGION is set\n` +
+                   `   - Verify the region exists and you have access to it\n` +
+                   `   - For CI/CD: Add AWS_REGION to GitHub secrets or workflow environment`;
+        }
+        
+        // Serverless Framework authentication errors
+        if (errorLower.includes('unauthorized') || errorLower.includes('serverless_access_key') ||
+            errorLower.includes('serverless login') || errorLower.includes('authentication failed')) {
+            return `${originalError}\n\n💡 Serverless Framework Authentication Issue:\n` +
+                   `   - Ensure SERVERLESS_ACCESS_KEY is set correctly\n` +
+                   `   - Get your access key from: https://app.serverless.com/\n` +
+                   `   - Required for Serverless Framework v4 with AWS SDK v3\n` +
+                   `   - For CI/CD: Add SERVERLESS_ACCESS_KEY to GitHub secrets`;
+        }
+        
+        // AWS SDK version compatibility issues
+        if (errorLower.includes('aws-sdk') || errorLower.includes('sdk')) {
+            return `${originalError}\n\n💡 AWS SDK Issue Detected:\n` +
+                   `   - Ensure you're using AWS SDK v3 compatible packages\n` +
+                   `   - Check that Serverless Framework v4 is installed\n` +
+                   `   - Verify Node.js 22 compatibility\n` +
+                   `   - Update serverless plugins to latest versions`;
+        }
+        
+        // Permission-related errors
+        if (errorLower.includes('access denied') || errorLower.includes('forbidden') || 
+            errorLower.includes('not authorized') || errorLower.includes('insufficient privileges')) {
+            return `${originalError}\n\n💡 Permission Issue Detected:\n` +
+                   `   - Verify AWS credentials have necessary permissions\n` +
+                   `   - Required permissions: Lambda, API Gateway, CloudFormation, IAM\n` +
+                   `   - Check if MFA or additional authentication is required\n` +
+                   `   - Ensure IAM user/role has deployment permissions for target stage`;
+        }
+        
+        // Missing or invalid environment variables
+        if (errorLower.includes('environment variable') || errorLower.includes('env var')) {
+            return `${originalError}\n\n💡 Environment Variable Issue:\n` +
+                   `   - Check that all required environment variables are set\n` +
+                   `   - Verify variable names are correct (case-sensitive)\n` +
+                   `   - For CI/CD: Ensure secrets are properly configured in GitHub`;
+        }
+        
+        return originalError;
+    }
+
+    /**
+     * Extract API Gateway endpoints from serverless deploy output with enhanced patterns
      */
     extractEndpoints(output) {
         const endpoints = [];
@@ -409,6 +613,7 @@ class DeploymentManager {
         const lines = output.split('\n');
         let inEndpointsSection = false;
 
+        // Pattern 1: Extract from endpoints section
         for (const line of lines) {
             if (line.includes('endpoints:')) {
                 inEndpointsSection = true;
@@ -418,15 +623,43 @@ class DeploymentManager {
             if (inEndpointsSection) {
                 if (line.trim().startsWith('- ') || line.trim().startsWith('GET ') ||
                     line.trim().startsWith('POST ') || line.trim().startsWith('PUT ') ||
-                    line.trim().startsWith('DELETE ')) {
+                    line.trim().startsWith('DELETE ') || line.trim().startsWith('PATCH ') ||
+                    line.trim().startsWith('OPTIONS ') || line.trim().startsWith('HEAD ')) {
                     endpoints.push(line.trim());
-                } else if (line.trim() === '' || line.includes('functions:')) {
+                } else if (line.trim() === '' || line.includes('functions:') || line.includes('layers:')) {
                     break;
                 }
             }
         }
 
-        return endpoints;
+        // Pattern 2: Extract direct HTTPS URLs
+        const urlPattern = /https:\/\/[a-zA-Z0-9.-]+\.execute-api\.[a-zA-Z0-9.-]+\.amazonaws\.com[^\s]*/g;
+        const urlMatches = output.match(urlPattern);
+        if (urlMatches) {
+            urlMatches.forEach(url => {
+                if (!endpoints.some(endpoint => endpoint.includes(url))) {
+                    endpoints.push(url);
+                }
+            });
+        }
+
+        // Pattern 3: Extract from service information section
+        const serviceInfoPattern = /Service Information[\s\S]*?(?=\n\n|\nStack Outputs|\nfunctions:|\n$)/;
+        const serviceInfoMatch = output.match(serviceInfoPattern);
+        if (serviceInfoMatch) {
+            const serviceInfo = serviceInfoMatch[0];
+            const serviceUrlPattern = /https:\/\/[^\s]+/g;
+            const serviceUrls = serviceInfo.match(serviceUrlPattern);
+            if (serviceUrls) {
+                serviceUrls.forEach(url => {
+                    if (!endpoints.some(endpoint => endpoint.includes(url))) {
+                        endpoints.push(url);
+                    }
+                });
+            }
+        }
+
+        return endpoints.filter(endpoint => endpoint.length > 0);
     }
 
     /**
@@ -556,21 +789,46 @@ class DeploymentManager {
 
         if (successful.length > 0) {
             logWithColor('\n✅ SUCCESSFUL DEPLOYMENTS:', 'green');
+            let totalEndpoints = 0;
             successful.forEach(result => {
                 logWithColor(`  📦 ${result.module} (${result.duration}ms)`, 'green');
                 if (result.endpoints && result.endpoints.length > 0) {
+                    totalEndpoints += result.endpoints.length;
+                    logWithColor(`    🔗 API Endpoints (${result.endpoints.length}):`, 'cyan');
                     result.endpoints.forEach(endpoint => {
-                        logWithColor(`    🔗 ${endpoint}`, 'cyan');
+                        logWithColor(`      ${endpoint}`, 'cyan');
                     });
+                } else {
+                    logWithColor(`    ℹ️  No HTTP endpoints (Lambda functions only)`, 'blue');
+                }
+                if (result.gitCommit) {
+                    logWithColor(`    📝 Git commit: ${result.gitCommit.substring(0, 8)}`, 'blue');
                 }
             });
+            
+            if (totalEndpoints > 0) {
+                logWithColor(`\n📊 Total API endpoints deployed: ${totalEndpoints}`, 'green');
+            }
         }
 
         if (failed.length > 0) {
             logWithColor('\n❌ FAILED DEPLOYMENTS:', 'red');
+            const errorCategories = {};
+            
             failed.forEach(result => {
                 logWithColor(`  📦 ${result.module}: ${result.error}`, 'red');
+                if (result.failureCategory) {
+                    logWithColor(`    🔍 Category: ${result.failureCategory}`, 'yellow');
+                    errorCategories[result.failureCategory] = (errorCategories[result.failureCategory] || 0) + 1;
+                }
             });
+            
+            if (Object.keys(errorCategories).length > 0) {
+                logWithColor('\n📊 Error Summary:', 'yellow');
+                Object.entries(errorCategories).forEach(([category, count]) => {
+                    logWithColor(`  ${category}: ${count} failure(s)`, 'yellow');
+                });
+            }
         }
 
         logWithColor('\n' + '='.repeat(60), 'cyan');
@@ -594,17 +852,19 @@ function displayHelp() {
     logWithColor('  --force          Deploy all modules regardless of changes', 'blue');
     logWithColor('  --help, -h       Show this help message', 'blue');
     logWithColor('\nChange Detection:', 'yellow');
-    logWithColor('  dev/uat: Uses file hash comparison for change detection', 'blue');
-    logWithColor('  prod:    Uses Git commit comparison for change detection', 'blue');
+    logWithColor('  dev:  Uses file hash comparison for change detection', 'blue');
+    logWithColor('  prod: Uses Git commit comparison for change detection', 'blue');
+    logWithColor('\nBranch-based Deployment (GitHub Actions):', 'yellow');
+    logWithColor('  development branch → dev environment', 'blue');
+    logWithColor('  main branch → prod environment', 'blue');
     logWithColor('\nExamples:', 'yellow');
     logWithColor('  Basic usage:', 'cyan');
     logWithColor('    node scripts/deploy.js                       # Deploy changed modules to dev', 'blue');
     logWithColor('    node scripts/deploy.js dev                   # Deploy changed modules to dev', 'blue');
     logWithColor('    node scripts/deploy.js prod --concurrency=1  # Deploy changed modules to prod sequentially', 'blue');
-    logWithColor('    node scripts/deploy.js uat --concurrency=3   # Deploy changed modules to uat with max concurrency', 'blue');
     logWithColor('    node scripts/deploy.js dev --force           # Force deploy all modules to dev', 'blue');
     logWithColor('  Local development:', 'cyan');
-    logWithColor('    AWS_PROFILE=taleofddh node scripts/deploy.js dev --concurrency=2', 'blue');
+    logWithColor('    AWS_PROFILE=myapp node scripts/deploy.js dev --concurrency=2', 'blue');
     logWithColor('  Production deployment:', 'cyan');
     logWithColor('    AWS_ACCESS_KEY_ID=xxx AWS_SECRET_ACCESS_KEY=xxx node scripts/deploy.js prod', 'blue');
     logWithColor('  CI/CD (with secrets):', 'cyan');
@@ -613,7 +873,7 @@ function displayHelp() {
     logWithColor('  - Serverless Framework v4 installed globally', 'blue');
     logWithColor('  - AWS credentials configured (profile or environment variables)', 'blue');
     logWithColor('  - SERVERLESS_ACCESS_KEY environment variable set', 'blue');
-    logWithColor('  - For local: AWS_PROFILE=taleofddh', 'blue');
+    logWithColor('  - For local: AWS_PROFILE=myapp', 'blue');
 }
 
 /**

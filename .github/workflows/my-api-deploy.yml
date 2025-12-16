@@ -1,0 +1,732 @@
+# GitHub Actions Workflow for Serverless API Deployment
+# 
+# This workflow runs on AWS CodeBuild managed runners for API deployments.
+# Uses CodeBuild infrastructure directly instead of GitHub-hosted runners.
+# 
+# INFRASTRUCTURE:
+# - Uses CodeBuild managed runner: codebuild-myapp-project
+# - Build Environment: Amazon Linux 2, x86_64, Standard 7.0
+# - Compute: BUILD_GENERAL1_SMALL
+# - Service Role: CodeBuildServiceRole-APIDeployment with Lambda, API Gateway, and CloudFormation permissions
+# 
+# AUTOMATIC TRIGGERING:
+# - Triggers on push to main or development branch with changes in my-api/**
+# - main branch: deploys to prod environment
+# - development branch: deploys to dev environment
+# - Primary method should be CodeBuild webhook (faster, more direct)
+# 
+# MANUAL TRIGGERING:
+# - Use when CodeBuild webhook is not working or for manual deployments
+# - Go to Actions tab → "Deploy My API" → "Run workflow"
+# - Options:
+#   - stage: Choose deployment stage (dev, prod)
+#   - force_deploy: Force deploy all modules even without detected changes
+#   - concurrency: Control deployment concurrency (1-3)
+# 
+# WHEN TO USE MANUAL TRIGGER:
+# - CodeBuild webhook is not responding
+# - Testing the CodeBuild managed runner
+# - Emergency API deployment
+# - Debugging deployment issues on CodeBuild infrastructure
+# - Deploying to specific stages without code changes
+#
+name: Deploy My API
+
+# Configuration - Update these values to match your CodeBuild setup
+# These should match the values used in scripts/setup-codebuild.js
+env:
+  CODEBUILD_PROJECT_NAME: myapp-project  # Must match PROJECT_NAME in setup-codebuild.js
+  LOG_GROUP_NAME: /aws/codebuild/myapp-project
+  # CodeBuild infrastructure configuration
+  CODEBUILD_REGION: ${{ secrets.AWS_REGION }}
+  CODEBUILD_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+  # Deployment type for buildspec.yml conditional logic
+  DEPLOYMENT_TYPE: api
+
+on:
+  # Primary trigger: Push to branches with my-api changes
+  # - development branch: deploys to dev environment
+  # - main branch: deploys to prod environment
+  push:
+    branches: [ main, development ]
+    paths:
+      - 'my-api/**'
+  
+  # Manual/fallback trigger: Use when CodeBuild webhook is not working or for manual deployments
+  workflow_dispatch:
+    inputs:
+      stage:
+        description: 'Deployment stage'
+        required: true
+        default: 'dev'
+        type: choice
+        options:
+          - dev
+          - prod
+      force_deploy:
+        description: 'Force deploy all modules even without detected changes'
+        required: false
+        default: false
+        type: boolean
+      concurrency:
+        description: 'Deployment concurrency (1-3)'
+        required: false
+        default: '2'
+        type: choice
+        options:
+          - '1'
+          - '2'
+          - '3'
+
+permissions:
+  contents: read
+
+jobs:
+  detect-changes:
+    runs-on:
+      - codebuild-${{ env.CODEBUILD_PROJECT_NAME }}-${{ github.run_id }}-${{ github.run_attempt }}
+      registration-group-id: 2
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/development' || github.event_name == 'workflow_dispatch'
+    outputs:
+      modules-changed: ${{ steps.changes.outputs.modules }}
+      changed-modules-list: ${{ steps.individual-changes.outputs.modules }}
+      should-deploy: ${{ steps.deployment-decision.outputs.should-deploy }}
+      deployment-stage: ${{ steps.deployment-decision.outputs.stage }}
+      deployment-concurrency: ${{ steps.deployment-decision.outputs.concurrency }}
+      force-deployment: ${{ steps.deployment-decision.outputs.force }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Detect API module changes
+        id: changes
+        run: |
+          # Handle force deploy scenario for manual dispatch
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ "${{ github.event.inputs.force_deploy }}" == "true" ]; then
+            echo "Force deploy enabled - including all API modules"
+            echo "modules=true" >> $GITHUB_OUTPUT
+          else
+            # Check for changes in my-api directory
+            if git diff --name-only HEAD~1 HEAD | grep -q '^my-api/'; then
+              echo "modules=true" >> $GITHUB_OUTPUT
+            else
+              echo "modules=false" >> $GITHUB_OUTPUT
+            fi
+          fi
+
+      - name: Detect individual module changes
+        id: individual-changes
+        run: |
+          # Handle force deploy scenario for manual dispatch
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ] && [ "${{ github.event.inputs.force_deploy }}" == "true" ]; then
+            echo "Force deploy enabled - including all API modules"
+            # Discover all modules in my-api directory
+            MODULES=$(find my-api -name "serverless.yml" -type f | sed 's|/serverless.yml||' | sed 's|my-api/||' | sort | tr '\n' ' ')
+            if [ -n "$MODULES" ]; then
+              MODULES_JSON=$(echo "$MODULES" | sed 's/ *$//' | sed 's/ /","/g' | sed 's/^/["/' | sed 's/$/"]/')
+            else
+              MODULES_JSON="[]"
+            fi
+          else
+            # Detect changed API modules (look for serverless.yml files in changed directories)
+            echo "Detecting changes in my-api modules..."
+            
+            # Get all changed files in my-api directory
+            CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD | grep '^my-api/' || echo "")
+            echo "Changed files in my-api/: $CHANGED_FILES"
+            
+            # Extract unique module directories that have changes
+            CHANGED_DIRS=$(echo "$CHANGED_FILES" | cut -d'/' -f1-2 | sort -u | grep -v '^my-api$' || echo "")
+            echo "Changed directories: $CHANGED_DIRS"
+            
+            MODULES=""
+            
+            for dir in $CHANGED_DIRS; do
+              echo "Checking directory: $dir"
+              if [ -f "$dir/serverless.yml" ]; then
+                MODULE_NAME=$(echo "$dir" | sed 's|my-api/||')
+                MODULES="$MODULES $MODULE_NAME"
+                echo "Found serverless module: $MODULE_NAME"
+              else
+                echo "No serverless.yml found in $dir"
+              fi
+            done
+            
+            if [ -n "$MODULES" ]; then
+              MODULES_JSON=$(echo "$MODULES" | sed 's/^ *//' | sed 's/ *$//' | sed 's/ /","/g' | sed 's/^/["/' | sed 's/$/"]/')
+            else
+              MODULES_JSON="[]"
+            fi
+          fi
+          
+          echo "Detected modules: $MODULES_JSON"
+          echo "modules=$MODULES_JSON" >> $GITHUB_OUTPUT
+
+      - name: Log detected modules
+        run: |
+          echo "=========================================="
+          echo "📋 API MODULE DETECTION SUMMARY"
+          echo "=========================================="
+          echo "🔄 Trigger: ${{ github.event_name }}"
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "🎯 Stage: ${{ github.event.inputs.stage }}"
+            echo "🔧 Force deploy: ${{ github.event.inputs.force_deploy }}"
+            echo "⚡ Concurrency: ${{ github.event.inputs.concurrency }}"
+          fi
+          echo ""
+          echo "📊 API modules to deploy:"
+          echo '${{ steps.individual-changes.outputs.modules }}' | jq -r '.[]' | sed 's/^/   - /' || echo "   - None"
+          echo ""
+          echo "🎯 Modules changed: ${{ steps.changes.outputs.modules }}"
+          echo "=========================================="
+
+      - name: Determine deployment parameters
+        id: deployment-decision
+        run: |
+          # Determine deployment parameters based on trigger type and changes
+          MODULES_CHANGED="${{ steps.changes.outputs.modules }}"
+          CHANGED_MODULES='${{ steps.individual-changes.outputs.modules }}'
+          
+          echo "=========================================="
+          echo "🔗 DEPLOYMENT DECISION ANALYSIS"
+          echo "=========================================="
+          
+          # Initialize deployment parameters
+          SHOULD_DEPLOY="false"
+          STAGE="dev"
+          CONCURRENCY="2"
+          FORCE="false"
+          
+          if [ "${{ github.event_name }}" == "push" ]; then
+            echo "📋 Trigger: Push to ${{ github.ref_name }} branch"
+            
+            # Determine stage based on branch
+            if [ "${{ github.ref_name }}" == "main" ]; then
+              STAGE="prod"
+              echo "🎯 Main branch detected - targeting production environment"
+            elif [ "${{ github.ref_name }}" == "development" ]; then
+              STAGE="dev"
+              echo "🎯 Development branch detected - targeting dev environment"
+            else
+              STAGE="dev"  # Fallback to dev for other branches
+              echo "🎯 Unknown branch - defaulting to dev environment"
+            fi
+            
+            # For push events, deploy if there are changes
+            if [ "$MODULES_CHANGED" == "true" ] && [ "$CHANGED_MODULES" != "[]" ]; then
+              SHOULD_DEPLOY="true"
+              echo "✅ API changes detected - will deploy to $STAGE environment"
+            else
+              echo "ℹ️  No API changes detected - skipping deployment"
+            fi
+            
+          elif [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "📋 Trigger: Manual workflow dispatch"
+            echo "🎯 Requested stage: ${{ github.event.inputs.stage }}"
+            echo "🔧 Force deploy: ${{ github.event.inputs.force_deploy }}"
+            echo "⚡ Concurrency: ${{ github.event.inputs.concurrency }}"
+            
+            # For manual dispatch, always deploy with specified parameters
+            SHOULD_DEPLOY="true"
+            STAGE="${{ github.event.inputs.stage }}"
+            CONCURRENCY="${{ github.event.inputs.concurrency }}"
+            FORCE="${{ github.event.inputs.force_deploy }}"
+            
+            if [ "$FORCE" == "true" ]; then
+              echo "🎯 Force deployment enabled - will deploy all modules"
+            elif [ "$CHANGED_MODULES" != "[]" ]; then
+              echo "🎯 Changes detected - will deploy changed modules"
+            else
+              echo "🎯 No changes detected but manual deployment requested"
+            fi
+          fi
+          
+          # Set outputs
+          echo "should-deploy=$SHOULD_DEPLOY" >> $GITHUB_OUTPUT
+          echo "stage=$STAGE" >> $GITHUB_OUTPUT
+          echo "concurrency=$CONCURRENCY" >> $GITHUB_OUTPUT
+          echo "force=$FORCE" >> $GITHUB_OUTPUT
+          
+          echo ""
+          echo "📊 DEPLOYMENT DECISIONS:"
+          echo "   Should deploy: $SHOULD_DEPLOY"
+          echo "   Stage: $STAGE"
+          echo "   Concurrency: $CONCURRENCY"
+          echo "   Force deployment: $FORCE"
+          echo "=========================================="
+
+  deploy-api:
+    name: "Deploy API Modules"
+    needs: detect-changes
+    if: needs.detect-changes.outputs.should-deploy == 'true'
+    runs-on:
+      - codebuild-${{ env.CODEBUILD_PROJECT_NAME }}-${{ github.run_id }}-${{ github.run_attempt }}
+      registration-group-id: 2
+    outputs:
+      deployment-status: ${{ steps.deploy.outputs.deployment-status }}
+      deployment-error: ${{ steps.deploy.outputs.deployment-error }}
+      deployment-endpoints: ${{ steps.deploy.outputs.endpoints }}
+      deployed-modules: ${{ steps.deploy.outputs.deployed-modules }}
+      deployment-duration: ${{ steps.deploy.outputs.deployment-duration }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Log deployment phase
+        run: |
+          echo "=========================================="
+          echo "🚀 API DEPLOYMENT PHASE"
+          echo "=========================================="
+          echo "🎯 Stage: ${{ needs.detect-changes.outputs.deployment-stage }}"
+          echo "⚡ Concurrency: ${{ needs.detect-changes.outputs.deployment-concurrency }}"
+          echo "🔧 Force deployment: ${{ needs.detect-changes.outputs.force-deployment }}"
+          echo "📦 Modules to deploy: ${{ needs.detect-changes.outputs.changed-modules-list }}"
+          echo "🔄 Trigger: ${{ github.event_name }}"
+          echo "📅 Started at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo "=========================================="
+
+      - name: Install Serverless Framework v4
+        run: |
+          echo "Installing Serverless Framework v4 for AWS SDK v3 compatibility..."
+          npm install -g serverless@4
+          echo "Serverless Framework version:"
+          serverless --version
+
+      - name: Configure Serverless Framework authentication
+        run: |
+          echo "Configuring Serverless Framework v4 authentication..."
+          if [ -n "${{ secrets.SERVERLESS_ACCESS_KEY }}" ]; then
+            echo "✅ SERVERLESS_ACCESS_KEY found, configuring authentication"
+            export SERVERLESS_ACCESS_KEY="${{ secrets.SERVERLESS_ACCESS_KEY }}"
+            # Serverless Framework v4 uses SERVERLESS_ACCESS_KEY environment variable
+            serverless login
+          else
+            echo "⚠️  SERVERLESS_ACCESS_KEY not found, deployment may fail"
+            echo "Please add SERVERLESS_ACCESS_KEY to GitHub Secrets"
+          fi
+
+      - name: Install project dependencies
+        run: |
+          echo "Installing project dependencies..."
+          npm install
+
+      - name: Execute API deployment
+        id: deploy
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          SERVERLESS_ACCESS_KEY: ${{ secrets.SERVERLESS_ACCESS_KEY }}
+          STAGE: ${{ needs.detect-changes.outputs.deployment-stage }}
+          DEPLOYMENT_TYPE: api
+        working-directory: my-api
+        run: |
+          echo "=========================================="
+          echo "🚀 EXECUTING API DEPLOYMENT"
+          echo "=========================================="
+          
+          # Initialize deployment tracking
+          DEPLOYMENT_START_TIME=$(date +%s)
+          DEPLOYMENT_STATUS="unknown"
+          DEPLOYMENT_ERROR=""
+          DEPLOYED_MODULES=""
+          ALL_ENDPOINTS=""
+          
+          # Build deployment command with parameters
+          DEPLOY_CMD="node scripts/deploy.js ${{ needs.detect-changes.outputs.deployment-stage }}"
+          DEPLOY_CMD="$DEPLOY_CMD --concurrency=${{ needs.detect-changes.outputs.deployment-concurrency }}"
+          
+          if [ "${{ needs.detect-changes.outputs.force-deployment }}" == "true" ]; then
+            DEPLOY_CMD="$DEPLOY_CMD --force"
+          fi
+          
+          echo "🔧 Deployment command: $DEPLOY_CMD"
+          echo "📁 Working directory: $(pwd)"
+          echo "🎯 Target stage: ${{ needs.detect-changes.outputs.deployment-stage }}"
+          echo "⚡ Concurrency: ${{ needs.detect-changes.outputs.deployment-concurrency }}"
+          echo "🔧 Force deployment: ${{ needs.detect-changes.outputs.force-deployment }}"
+          echo ""
+          
+          # Discover available modules
+          echo "📦 Available serverless modules:"
+          AVAILABLE_MODULES=$(find . -name "serverless.yml" -type f | sed 's|/serverless.yml||' | sed 's|./||' | sort)
+          if [ -n "$AVAILABLE_MODULES" ]; then
+            echo "$AVAILABLE_MODULES" | sed 's/^/   - /'
+            MODULE_COUNT=$(echo "$AVAILABLE_MODULES" | wc -l)
+            echo "📊 Total modules found: $MODULE_COUNT"
+          else
+            echo "   ⚠️  No serverless.yml files found"
+            DEPLOYMENT_STATUS="failed"
+            DEPLOYMENT_ERROR="No serverless modules found to deploy"
+            echo "deployment-status=failed" >> $GITHUB_OUTPUT
+            echo "deployment-error=No serverless modules found to deploy" >> $GITHUB_OUTPUT
+            echo "endpoints=" >> $GITHUB_OUTPUT
+            echo "deployed-modules=" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+          
+          echo ""
+          echo "🚀 Starting deployment process..."
+          echo "=========================================="
+          
+          # Execute deployment and capture comprehensive output
+          if $DEPLOY_CMD 2>&1 | tee deployment_output.log; then
+            DEPLOYMENT_STATUS="success"
+            echo ""
+            echo "✅ API deployment completed successfully"
+            
+            # Extract comprehensive deployment information
+            echo "📊 Analyzing deployment results..."
+            
+            # Extract deployed modules from output
+            DEPLOYED_MODULES=$(grep -E "✅.*deployed successfully" deployment_output.log | sed -E 's/.*✅ ([^[:space:]]+) deployed successfully.*/\1/' | tr '\n' ',' | sed 's/,$//' || echo "")
+            
+            # Enhanced endpoint extraction with multiple patterns
+            echo "🔍 Extracting API endpoints..."
+            
+            # Pattern 1: Direct HTTPS URLs from serverless output
+            HTTPS_ENDPOINTS=$(grep -oE "https://[a-zA-Z0-9.-]+\.execute-api\.[a-zA-Z0-9.-]+\.amazonaws\.com[^[:space:]]*" deployment_output.log | sort -u || echo "")
+            
+            # Pattern 2: Endpoint sections from serverless output
+            ENDPOINT_SECTIONS=$(awk '/endpoints:/{flag=1; next} /functions:|stack:|^$/{flag=0} flag && /- /{print $0}' deployment_output.log | sed 's/^[[:space:]]*-[[:space:]]*//' || echo "")
+            
+            # Pattern 3: API Gateway URLs from deployment summary
+            API_GATEWAY_URLS=$(grep -oE "https://[^[:space:]]+\.amazonaws\.com[^[:space:]]*" deployment_output.log | grep -E "(execute-api|apigateway)" | sort -u || echo "")
+            
+            # Combine all endpoint patterns
+            ALL_ENDPOINTS=$(echo -e "$HTTPS_ENDPOINTS\n$ENDPOINT_SECTIONS\n$API_GATEWAY_URLS" | grep -v '^$' | sort -u | head -20)
+            
+            if [ -n "$ALL_ENDPOINTS" ]; then
+              echo "endpoints<<EOF" >> $GITHUB_OUTPUT
+              echo "$ALL_ENDPOINTS" >> $GITHUB_OUTPUT
+              echo "EOF" >> $GITHUB_OUTPUT
+              
+              echo ""
+              echo "🔗 Deployed API Endpoints:"
+              echo "$ALL_ENDPOINTS" | sed 's/^/   /'
+              ENDPOINT_COUNT=$(echo "$ALL_ENDPOINTS" | wc -l)
+              echo "📊 Total endpoints: $ENDPOINT_COUNT"
+            else
+              echo "endpoints=" >> $GITHUB_OUTPUT
+              echo "⚠️  No API endpoints detected in deployment output"
+              echo "💡 This may be normal for Lambda functions without HTTP triggers"
+            fi
+            
+            # Set successful deployment outputs
+            echo "deployment-status=success" >> $GITHUB_OUTPUT
+            echo "deployment-error=" >> $GITHUB_OUTPUT
+            echo "deployed-modules=$DEPLOYED_MODULES" >> $GITHUB_OUTPUT
+            
+          else
+            DEPLOYMENT_STATUS="failed"
+            DEPLOYMENT_EXIT_CODE=$?
+            
+            echo ""
+            echo "❌ API deployment failed (exit code: $DEPLOYMENT_EXIT_CODE)"
+            
+            # Enhanced error analysis and reporting
+            echo "🔍 Analyzing deployment failure..."
+            
+            # Extract specific error patterns
+            CREDENTIAL_ERRORS=$(grep -i -E "(credential|unauthorized|access.*denied|invalid.*key)" deployment_output.log || echo "")
+            SERVERLESS_ERRORS=$(grep -i -E "(serverless.*error|framework.*error)" deployment_output.log || echo "")
+            AWS_ERRORS=$(grep -i -E "(aws.*error|cloudformation.*error|lambda.*error)" deployment_output.log || echo "")
+            PERMISSION_ERRORS=$(grep -i -E "(permission.*denied|not.*authorized|forbidden)" deployment_output.log || echo "")
+            
+            # Determine primary error category
+            if [ -n "$CREDENTIAL_ERRORS" ]; then
+              DEPLOYMENT_ERROR="Credential authentication failed"
+              echo "🔐 Credential Error Detected:"
+              echo "$CREDENTIAL_ERRORS" | head -3 | sed 's/^/   /'
+              echo ""
+              echo "💡 Troubleshooting steps:"
+              echo "   - Verify AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY are set correctly"
+              echo "   - Check that SERVERLESS_ACCESS_KEY is configured"
+              echo "   - Ensure credentials have necessary permissions (Lambda, API Gateway, CloudFormation)"
+            elif [ -n "$PERMISSION_ERRORS" ]; then
+              DEPLOYMENT_ERROR="AWS permissions insufficient"
+              echo "🚫 Permission Error Detected:"
+              echo "$PERMISSION_ERRORS" | head -3 | sed 's/^/   /'
+              echo ""
+              echo "💡 Troubleshooting steps:"
+              echo "   - Verify IAM user/role has Lambda, API Gateway, and CloudFormation permissions"
+              echo "   - Check if MFA or additional authentication is required"
+              echo "   - Ensure the AWS region is accessible"
+            elif [ -n "$SERVERLESS_ERRORS" ]; then
+              DEPLOYMENT_ERROR="Serverless Framework configuration error"
+              echo "⚙️  Serverless Framework Error Detected:"
+              echo "$SERVERLESS_ERRORS" | head -3 | sed 's/^/   /'
+              echo ""
+              echo "💡 Troubleshooting steps:"
+              echo "   - Check serverless.yml configuration files"
+              echo "   - Verify Serverless Framework v4 is installed"
+              echo "   - Ensure SERVERLESS_ACCESS_KEY is valid"
+            elif [ -n "$AWS_ERRORS" ]; then
+              DEPLOYMENT_ERROR="AWS service error"
+              echo "☁️  AWS Service Error Detected:"
+              echo "$AWS_ERRORS" | head -3 | sed 's/^/   /'
+              echo ""
+              echo "💡 Troubleshooting steps:"
+              echo "   - Check AWS service status and limits"
+              echo "   - Verify CloudFormation stack state"
+              echo "   - Review Lambda function configurations"
+            else
+              DEPLOYMENT_ERROR="Unknown deployment error"
+              echo "❓ Unknown Error - Full deployment log:"
+              tail -20 deployment_output.log | sed 's/^/   /'
+            fi
+            
+            # Set failure outputs
+            echo "deployment-status=failed" >> $GITHUB_OUTPUT
+            echo "deployment-error=$DEPLOYMENT_ERROR" >> $GITHUB_OUTPUT
+            echo "endpoints=" >> $GITHUB_OUTPUT
+            echo "deployed-modules=" >> $GITHUB_OUTPUT
+            
+            echo ""
+            echo "📋 For detailed error analysis, check the deployment logs artifact"
+            exit 1
+          fi
+          
+          # Calculate and report deployment duration
+          DEPLOYMENT_END_TIME=$(date +%s)
+          DEPLOYMENT_DURATION=$((DEPLOYMENT_END_TIME - DEPLOYMENT_START_TIME))
+          echo ""
+          echo "⏱️  Total deployment duration: ${DEPLOYMENT_DURATION} seconds"
+          echo "deployment-duration=$DEPLOYMENT_DURATION" >> $GITHUB_OUTPUT
+          
+          echo "=========================================="
+          echo "✅ DEPLOYMENT PHASE COMPLETED"
+          echo "=========================================="
+
+      - name: Upload comprehensive deployment artifacts
+        if: always()
+        run: |
+          # Create deployment summary file
+          echo "=========================================" > deployment_summary.txt
+          echo "API DEPLOYMENT SUMMARY" >> deployment_summary.txt
+          echo "=========================================" >> deployment_summary.txt
+          echo "Stage: ${{ needs.detect-changes.outputs.deployment-stage }}" >> deployment_summary.txt
+          echo "Trigger: ${{ github.event_name }}" >> deployment_summary.txt
+          echo "Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')" >> deployment_summary.txt
+          echo "Git Commit: ${{ github.sha }}" >> deployment_summary.txt
+          echo "Workflow Run: ${{ github.run_id }}" >> deployment_summary.txt
+          echo "" >> deployment_summary.txt
+          
+          # Add deployment status
+          if [ "${{ steps.deploy.outputs.deployment-status }}" == "success" ]; then
+            echo "Status: ✅ SUCCESS" >> deployment_summary.txt
+            if [ -n "${{ steps.deploy.outputs.deployed-modules }}" ]; then
+              echo "Deployed Modules: ${{ steps.deploy.outputs.deployed-modules }}" >> deployment_summary.txt
+            fi
+            if [ -n "${{ steps.deploy.outputs.deployment-duration }}" ]; then
+              echo "Duration: ${{ steps.deploy.outputs.deployment-duration }} seconds" >> deployment_summary.txt
+            fi
+          else
+            echo "Status: ❌ FAILED" >> deployment_summary.txt
+            if [ -n "${{ steps.deploy.outputs.deployment-error }}" ]; then
+              echo "Error: ${{ steps.deploy.outputs.deployment-error }}" >> deployment_summary.txt
+            fi
+          fi
+          
+          echo "" >> deployment_summary.txt
+          
+          # Add endpoints if available
+          if [ -n "${{ steps.deploy.outputs.endpoints }}" ]; then
+            echo "API Endpoints:" >> deployment_summary.txt
+            echo "${{ steps.deploy.outputs.endpoints }}" | sed 's/^/  /' >> deployment_summary.txt
+          else
+            echo "API Endpoints: None detected" >> deployment_summary.txt
+          fi
+          
+          echo "" >> deployment_summary.txt
+          echo "=========================================" >> deployment_summary.txt
+
+      - name: Upload deployment artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-artifacts-${{ needs.detect-changes.outputs.deployment-stage }}-${{ github.run_id }}
+          path: |
+            deployment_output.log
+            deployment_summary.txt
+          retention-days: 30
+
+  deployment-summary:
+    name: "Deployment Summary"
+    needs: [detect-changes, deploy-api]
+    if: always() && needs.detect-changes.outputs.should-deploy == 'true'
+    runs-on:
+      - codebuild-${{ env.CODEBUILD_PROJECT_NAME }}-${{ github.run_id }}-${{ github.run_attempt }}
+      registration-group-id: 2
+    steps:
+      - name: Generate comprehensive deployment summary
+        run: |
+          echo "=========================================="
+          echo "📊 API DEPLOYMENT SUMMARY"
+          echo "=========================================="
+          echo "🎯 Stage: ${{ needs.detect-changes.outputs.deployment-stage }}"
+          echo "🔄 Trigger: ${{ github.event_name }}"
+          echo "📦 Target modules: ${{ needs.detect-changes.outputs.changed-modules-list }}"
+          echo "⚡ Concurrency: ${{ needs.detect-changes.outputs.deployment-concurrency }}"
+          echo "🔧 Force deployment: ${{ needs.detect-changes.outputs.force-deployment }}"
+          echo "📅 Completed at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          
+          # Display deployment duration if available
+          if [ -n "${{ needs.deploy-api.outputs.deployment-duration }}" ]; then
+            echo "⏱️  Duration: ${{ needs.deploy-api.outputs.deployment-duration }} seconds"
+          fi
+          
+          echo ""
+          
+          # Enhanced status reporting based on deployment outputs
+          DEPLOYMENT_STATUS="${{ needs.deploy-api.outputs.deployment-status }}"
+          JOB_RESULT="${{ needs.deploy-api.result }}"
+          
+          if [ "$DEPLOYMENT_STATUS" == "success" ] && [ "$JOB_RESULT" == "success" ]; then
+            echo "✅ DEPLOYMENT STATUS: SUCCESS"
+            
+            # Display deployed modules
+            if [ -n "${{ needs.deploy-api.outputs.deployed-modules }}" ]; then
+              echo ""
+              echo "📦 Successfully deployed modules:"
+              echo "${{ needs.deploy-api.outputs.deployed-modules }}" | tr ',' '\n' | sed 's/^/   ✅ /'
+            fi
+            
+            # Display API endpoints with enhanced formatting
+            if [ -n "${{ needs.deploy-api.outputs.deployment-endpoints }}" ]; then
+              echo ""
+              echo "🔗 API ENDPOINTS:"
+              echo "${{ needs.deploy-api.outputs.deployment-endpoints }}" | sed 's/^/   🌐 /'
+              
+              # Count endpoints
+              ENDPOINT_COUNT=$(echo "${{ needs.deploy-api.outputs.deployment-endpoints }}" | wc -l)
+              echo ""
+              echo "📊 Total endpoints deployed: $ENDPOINT_COUNT"
+            else
+              echo ""
+              echo "ℹ️  No HTTP API endpoints detected"
+              echo "💡 This is normal for Lambda functions without API Gateway triggers"
+            fi
+            
+            echo ""
+            echo "🎉 All API modules deployed successfully to ${{ needs.detect-changes.outputs.deployment-stage }} environment!"
+            
+          elif [ "$DEPLOYMENT_STATUS" == "failed" ] || [ "$JOB_RESULT" == "failure" ]; then
+            echo "❌ DEPLOYMENT STATUS: FAILED"
+            
+            # Display specific error information
+            if [ -n "${{ needs.deploy-api.outputs.deployment-error }}" ]; then
+              echo ""
+              echo "🔍 Error details: ${{ needs.deploy-api.outputs.deployment-error }}"
+            fi
+            
+            echo ""
+            echo "💡 TROUBLESHOOTING GUIDE:"
+            echo "   1. Check AWS credentials configuration:"
+            echo "      - Verify AWS_ACCESS_KEY_ID is set correctly"
+            echo "      - Verify AWS_SECRET_ACCESS_KEY is set correctly"
+            echo "      - Ensure AWS_REGION is configured"
+            echo ""
+            echo "   2. Check Serverless Framework authentication:"
+            echo "      - Verify SERVERLESS_ACCESS_KEY is configured"
+            echo "      - Ensure Serverless Framework v4 is installed"
+            echo ""
+            echo "   3. Check AWS permissions:"
+            echo "      - Lambda function management permissions"
+            echo "      - API Gateway management permissions"
+            echo "      - CloudFormation stack operations"
+            echo "      - IAM role management for Lambda execution"
+            echo ""
+            echo "   4. Check CodeBuild infrastructure:"
+            echo "      - Ensure CodeBuild project 'myapp-project' exists"
+            echo "      - Verify CodeBuild service role permissions"
+            echo "      - Check CodeBuild project configuration"
+            echo ""
+            echo "   5. Review deployment logs:"
+            echo "      - Download the deployment logs artifact"
+            echo "      - Check for specific error messages"
+            echo "      - Look for AWS service-specific errors"
+            
+          elif [ "$JOB_RESULT" == "cancelled" ]; then
+            echo "⏹️  DEPLOYMENT STATUS: CANCELLED"
+            echo ""
+            echo "ℹ️  The deployment was cancelled before completion"
+            echo "💡 This may be due to:"
+            echo "   - Manual cancellation by user"
+            echo "   - Workflow timeout"
+            echo "   - GitHub Actions system issues"
+            
+          else
+            echo "⚠️  DEPLOYMENT STATUS: UNKNOWN ($JOB_RESULT)"
+            echo ""
+            echo "🔍 Unexpected deployment state detected"
+            echo "💡 Please check the deployment logs for more information"
+          fi
+          
+          echo ""
+          echo "=========================================="
+
+      - name: Set workflow exit status
+        run: |
+          DEPLOYMENT_STATUS="${{ needs.deploy-api.outputs.deployment-status }}"
+          JOB_RESULT="${{ needs.deploy-api.result }}"
+          
+          if [ "$DEPLOYMENT_STATUS" == "success" ] && [ "$JOB_RESULT" == "success" ]; then
+            echo "🎉 API deployment workflow completed successfully!"
+            echo "✅ All modules deployed to ${{ needs.detect-changes.outputs.deployment-stage }} environment"
+            exit 0
+          else
+            echo "⚠️  API deployment workflow completed with issues"
+            echo "❌ Deployment failed - check summary above for troubleshooting steps"
+            exit 1
+          fi
+
+      - name: Create deployment status badge
+        if: always()
+        run: |
+          # Create a simple status indicator for quick reference
+          DEPLOYMENT_STATUS="${{ needs.deploy-api.outputs.deployment-status }}"
+          JOB_RESULT="${{ needs.deploy-api.result }}"
+          STAGE="${{ needs.detect-changes.outputs.deployment-stage }}"
+          
+          if [ "$DEPLOYMENT_STATUS" == "success" ] && [ "$JOB_RESULT" == "success" ]; then
+            echo "🟢 $STAGE deployment: SUCCESS" > deployment_status.txt
+          else
+            echo "🔴 $STAGE deployment: FAILED" > deployment_status.txt
+          fi
+          
+          echo ""
+          echo "📋 Deployment Status Badge:"
+          cat deployment_status.txt
+
+      - name: Upload deployment status
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deployment-status-${{ needs.detect-changes.outputs.deployment-stage }}-${{ github.run_id }}
+          path: deployment_status.txt
+          retention-days: 7

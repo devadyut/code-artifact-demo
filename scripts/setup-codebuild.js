@@ -4,7 +4,7 @@
  * AWS CodeBuild Project Setup Script
  * 
  * This script creates and configures an AWS CodeBuild project with GitHub webhook integration
- * for automated package publishing to CodeArtifact.
+ * for automated package publishing to CodeArtifact and API deployments.
  * 
  * Features:
  * - Creates CodeBuild project with GitHub source integration
@@ -12,6 +12,7 @@
  * - Sets up GitHub personal access token authentication
  * - Configures automatic status reporting to GitHub commits
  * - Creates required IAM service role with appropriate permissions
+ * - Supports both library publishing and API deployment workflows
  * - Tests webhook functionality
  * 
  * Requirements:
@@ -46,14 +47,15 @@ import {
   GetCallerIdentityCommand
 } from '@aws-sdk/client-sts';
 import logger from '../utils/logger.js';
+import { type } from 'os';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Configuration constants
-const PROJECT_NAME = 'publish-packages-to-codeartifact';
+const PROJECT_NAME = 'myapp-project';
 const SERVICE_ROLE_NAME = 'CodeBuildServiceRole-PackagePublishing';
-const POLICY_NAME = 'CodeBuildPackagePublishingPolicy';
+const POLICY_NAME = 'CodeBuildPackagePublishingAndAPIDeploymentPolicy';
 
 /**
  * Load configuration from codeartifact-config.json
@@ -192,13 +194,13 @@ async function createServiceRole(iamClient, accountId, region, codeartifactDomai
     const createRoleCommand = new CreateRoleCommand({
       RoleName: SERVICE_ROLE_NAME,
       AssumeRolePolicyDocument: JSON.stringify(trustPolicy),
-      Description: 'Service role for CodeBuild package publishing project'
+      Description: 'Service role for CodeBuild package publishing and API deployment project'
     });
     
     const roleResponse = await iamClient.send(createRoleCommand);
     logger.success(`Created service role: ${SERVICE_ROLE_NAME}`);
     
-    // Create custom policy for CodeArtifact and CloudWatch Logs
+    // Create custom policy for CodeArtifact, API deployments, and CloudWatch Logs
     const policyDocument = {
       Version: '2012-10-17',
       Statement: [
@@ -230,13 +232,96 @@ async function createServiceRole(iamClient, accountId, region, codeartifactDomai
         {
           Effect: 'Allow',
           Action: [
+            'lambda:CreateFunction',
+            'lambda:UpdateFunctionCode',
+            'lambda:UpdateFunctionConfiguration',
+            'lambda:DeleteFunction',
+            'lambda:GetFunction',
+            'lambda:ListFunctions',
+            'lambda:InvokeFunction',
+            'lambda:AddPermission',
+            'lambda:RemovePermission',
+            'lambda:GetPolicy',
+            'lambda:PutProvisionedConcurrencyConfig',
+            'lambda:DeleteProvisionedConcurrencyConfig',
+            'lambda:GetProvisionedConcurrencyConfig',
+            'lambda:ListProvisionedConcurrencyConfigs'
+          ],
+          Resource: `arn:aws:lambda:${region}:${accountId}:function:*`
+        },
+        {
+          Effect: 'Allow',
+          Action: [
+            'apigateway:GET',
+            'apigateway:POST',
+            'apigateway:PUT',
+            'apigateway:DELETE',
+            'apigateway:PATCH'
+          ],
+          Resource: `arn:aws:apigateway:${region}::*`
+        },
+        {
+          Effect: 'Allow',
+          Action: [
+            'cloudformation:CreateStack',
+            'cloudformation:UpdateStack',
+            'cloudformation:DeleteStack',
+            'cloudformation:DescribeStacks',
+            'cloudformation:DescribeStackEvents',
+            'cloudformation:DescribeStackResources',
+            'cloudformation:GetTemplate',
+            'cloudformation:ValidateTemplate',
+            'cloudformation:ListStackResources'
+          ],
+          Resource: `arn:aws:cloudformation:${region}:${accountId}:stack/*`
+        },
+        {
+          Effect: 'Allow',
+          Action: [
+            'iam:CreateRole',
+            'iam:DeleteRole',
+            'iam:GetRole',
+            'iam:PassRole',
+            'iam:AttachRolePolicy',
+            'iam:DetachRolePolicy',
+            'iam:PutRolePolicy',
+            'iam:DeleteRolePolicy',
+            'iam:GetRolePolicy'
+          ],
+          Resource: `arn:aws:iam::${accountId}:role/*`
+        },
+        {
+          Effect: 'Allow',
+          Action: [
+            's3:CreateBucket',
+            's3:DeleteBucket',
+            's3:GetBucketLocation',
+            's3:GetBucketPolicy',
+            's3:PutBucketPolicy',
+            's3:DeleteBucketPolicy',
+            's3:GetObject',
+            's3:PutObject',
+            's3:DeleteObject',
+            's3:ListBucket'
+          ],
+          Resource: [
+            `arn:aws:s3:::*serverless*`,
+            `arn:aws:s3:::*serverless*/*`
+          ]
+        },
+        {
+          Effect: 'Allow',
+          Action: [
             'logs:CreateLogGroup',
             'logs:CreateLogStream',
-            'logs:PutLogEvents'
+            'logs:PutLogEvents',
+            'logs:DescribeLogGroups',
+            'logs:DescribeLogStreams'
           ],
           Resource: [
             `arn:aws:logs:${region}:${accountId}:log-group:/aws/codebuild/${PROJECT_NAME}`,
-            `arn:aws:logs:${region}:${accountId}:log-group:/aws/codebuild/${PROJECT_NAME}:*`
+            `arn:aws:logs:${region}:${accountId}:log-group:/aws/codebuild/${PROJECT_NAME}:*`,
+            `arn:aws:logs:${region}:${accountId}:log-group:/aws/lambda/*`
           ]
         }
       ]
@@ -257,7 +342,7 @@ async function createServiceRole(iamClient, accountId, region, codeartifactDomai
         const createPolicyCommand = new CreatePolicyCommand({
           PolicyName: POLICY_NAME,
           PolicyDocument: JSON.stringify(policyDocument),
-          Description: 'Policy for CodeBuild package publishing to CodeArtifact'
+          Description: 'Policy for CodeBuild package publishing to CodeArtifact and API deployments'
         });
         
         const policyResponse = await iamClient.send(createPolicyCommand);
@@ -309,7 +394,8 @@ async function createCodeBuildProject(codebuildClient, config, serviceRoleArn, g
   
   const projectConfig = {
     name: PROJECT_NAME,
-    description: 'Automated package publishing to AWS CodeArtifact',
+    type: 'Runner',
+    description: 'Automated package publishing to AWS CodeArtifact and API deployments',
     source: {
       type: 'GITHUB',
       location: `https://github.com/${github.repository}.git`,

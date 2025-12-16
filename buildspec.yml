@@ -1,11 +1,42 @@
 version: 0.2
 
 phases:
+  pre_build:
+    commands:
+      - echo "Build started on `date`"
+      - echo "Deployment type: ${DEPLOYMENT_TYPE:-library}"
+      - echo "Node.js version: $(node --version)"
+      - echo "NPM version: $(npm --version)"
+      
   build:
     commands:
-      - echo "Running CodeArtifact setup..."
-      - echo "This will install dependencies, create infrastructure, and publish packages"
-      - npm run setup
+      - |
+        if [ "${DEPLOYMENT_TYPE}" = "api" ]; then
+          echo "Running API deployment..."
+          echo "Installing Node.js 22 if needed..."
+          # Node.js 22 is available in aws/codebuild/standard:7.0
+          echo "Current Node.js version: $(node --version)"
+          
+          echo "Installing Serverless Framework v4..."
+          npm install -g serverless@4
+          
+          echo "Configuring Serverless Framework authentication..."
+          if [ -n "${SERVERLESS_ACCESS_KEY}" ]; then
+            serverless config credentials --provider aws --key "${AWS_ACCESS_KEY_ID}" --secret "${AWS_SECRET_ACCESS_KEY}" --region "${AWS_REGION}"
+          else
+            echo "Warning: SERVERLESS_ACCESS_KEY not set, using AWS credentials directly"
+          fi
+          
+          echo "Installing project dependencies..."
+          npm install
+          
+          echo "Running API deployment script..."
+          node my-api/scripts/deploy.js ${STAGE:-dev}
+        else
+          echo "Running CodeArtifact setup..."
+          echo "This will install dependencies, create infrastructure, and publish packages"
+          npm run setup
+        fi
       
 artifacts:
   files:

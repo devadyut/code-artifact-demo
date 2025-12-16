@@ -6,6 +6,7 @@
   "private": true,
   "scripts": {
     "setup": "node scripts/setup-codeartifact.js",
+    "setup-codebuild": "node scripts/setup-codebuild.js",
     "auth-token": "node scripts/generate-auth-token.js",
     "test": "jest"
   },

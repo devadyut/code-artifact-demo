@@ -3,8 +3,8 @@ import path from 'path';
 import { execSync } from 'child_process';
 
 /**
- * Discover all Lambda modules in the repository
- * Excludes the game folder as specified in requirements
+ * Discover all Lambda modules in the my-api directory
+ * Looks for directories containing both package.json and serverless.yml
  * @returns {Array} Array of module objects with name and path
  */
 function discoverModules() {
@@ -15,8 +15,8 @@ function discoverModules() {
         const entries = fs.readdirSync(rootDir, { withFileTypes: true });
         
         for (const entry of entries) {
-            // Skip if not a directory or if it's the game folder
-            if (!entry.isDirectory() || entry.name === 'game') {
+            // Skip if not a directory or if it's a special directory
+            if (!entry.isDirectory() || entry.name.startsWith('.') || entry.name === 'scripts' || entry.name === 'node_modules') {
                 continue;
             }
             

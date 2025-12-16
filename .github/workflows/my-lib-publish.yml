@@ -4,7 +4,7 @@
 # Uses CodeBuild infrastructure directly instead of GitHub-hosted runners.
 # 
 # INFRASTRUCTURE:
-# - Uses CodeBuild managed runner: codebuild-publish-packages-to-codeartifact
+# - Uses CodeBuild managed runner: codebuild-myapp-project
 # - Build Environment: Amazon Linux 2, x86_64, Standard 7.0
 # - Compute: BUILD_GENERAL1_SMALL
 # - Service Role: CodeBuildServiceRole-PackagePublishing with CodeArtifact permissions
@@ -31,8 +31,8 @@ name: Publish Packages to CodeArtifact
 # Configuration - Update these values to match your CodeBuild setup
 # These should match the values used in scripts/setup-codebuild.js
 env:
-  CODEBUILD_PROJECT_NAME: publish-packages-to-codeartifact  # Must match PROJECT_NAME in setup-codebuild.js
-  LOG_GROUP_NAME: /aws/codebuild/publish-packages-to-codeartifact
+  CODEBUILD_PROJECT_NAME: myapp-project  # Must match PROJECT_NAME in setup-codebuild.js
+  LOG_GROUP_NAME: /aws/codebuild/myapp-project
   # CodeBuild infrastructure configuration
   CODEBUILD_REGION: ${{ secrets.AWS_REGION }}
   CODEBUILD_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
@@ -68,7 +68,9 @@ permissions:
 
 jobs:
   detect-changes:
-    runs-on: codebuild-publish-packages-to-codeartifact-${{ github.run_id }}-${{ github.run_attempt }}
+    runs-on:
+      - codebuild-${{ env.CODEBUILD_PROJECT_NAME }}-${{ github.run_id }}-${{ github.run_attempt }}
+      registration-group-id: 1
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     outputs:
       services-changed: ${{ steps.changes.outputs.services }}
@@ -278,7 +280,9 @@ jobs:
         github.event.inputs.package_scope == 'aggregate-and-above' || 
         github.event.inputs.package_scope == 'full-pipeline') &&
        (needs.detect-changes.outputs.individual-services != '[]' || github.event.inputs.force_publish == 'true'))
-    runs-on: codebuild-publish-packages-to-codeartifact-${{ github.run_id }}-${{ github.run_attempt }}
+    runs-on:
+      - codebuild-${{ env.CODEBUILD_PROJECT_NAME }}-${{ github.run_id }}-${{ github.run_attempt }}
+      registration-group-id: 1
     strategy:
       fail-fast: false
       matrix:
@@ -369,7 +373,9 @@ jobs:
         github.event.inputs.package_scope == 'aggregate-and-above' || 
         github.event.inputs.package_scope == 'full-pipeline') &&
        (needs.detect-changes.outputs.individual-utilities != '[]' || github.event.inputs.force_publish == 'true'))
-    runs-on: codebuild-publish-packages-to-codeartifact-${{ github.run_id }}-${{ github.run_attempt }}
+    runs-on:
+      - codebuild-${{ env.CODEBUILD_PROJECT_NAME }}-${{ github.run_id }}-${{ github.run_attempt }}
+      registration-group-id: 1
     strategy:
       fail-fast: false
       matrix:
@@ -461,7 +467,9 @@ jobs:
         (github.event.inputs.package_scope == 'aggregate-and-above' || 
          github.event.inputs.package_scope == 'full-pipeline') &&
         (needs.detect-changes.outputs.services-changed == 'true' || github.event.inputs.force_publish == 'true')))
-    runs-on: codebuild-publish-packages-to-codeartifact-${{ github.run_id }}-${{ github.run_attempt }}
+    runs-on:
+      - codebuild-${{ env.CODEBUILD_PROJECT_NAME }}-${{ github.run_id }}-${{ github.run_attempt }}
+      registration-group-id: 1
     outputs:
       services-aggregate-status: ${{ job.status }}
     steps:
@@ -556,7 +564,9 @@ jobs:
         (github.event.inputs.package_scope == 'aggregate-and-above' || 
          github.event.inputs.package_scope == 'full-pipeline') &&
         (needs.detect-changes.outputs.utilities-changed == 'true' || github.event.inputs.force_publish == 'true')))
-    runs-on: codebuild-publish-packages-to-codeartifact-${{ github.run_id }}-${{ github.run_attempt }}
+    runs-on:
+      - codebuild-${{ env.CODEBUILD_PROJECT_NAME }}-${{ github.run_id }}-${{ github.run_attempt }}
+      registration-group-id: 1
     outputs:
       utilities-aggregate-status: ${{ job.status }}
     steps:
@@ -657,7 +667,9 @@ jobs:
         (github.event.inputs.package_scope == 'main-only' || 
          github.event.inputs.package_scope == 'full-pipeline') &&
         (needs.detect-changes.outputs.services-changed == 'true' || needs.detect-changes.outputs.utilities-changed == 'true' || github.event.inputs.force_publish == 'true')))
-    runs-on: codebuild-publish-packages-to-codeartifact-${{ github.run_id }}-${{ github.run_attempt }}
+    runs-on:
+      - codebuild-${{ env.CODEBUILD_PROJECT_NAME }}-${{ github.run_id }}-${{ github.run_attempt }}
+      registration-group-id: 1
     outputs:
       main-package-status: ${{ job.status }}
     steps:
