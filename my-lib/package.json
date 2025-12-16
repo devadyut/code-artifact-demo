@@ -1,6 +1,6 @@
 {
   "name": "@myorg/libraries",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "My App shared libraries of services, utilities and more",
   "type": "module",
   "scripts": {
