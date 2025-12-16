@@ -69,7 +69,7 @@ permissions:
 jobs:
   detect-changes:
     runs-on:
-      - codebuild-${{ env.CODEBUILD_PROJECT_NAME }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - codebuild-myapp-project-${{ github.run_id }}-${{ github.run_attempt }}
         registration-group-id:1
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     outputs:
@@ -281,7 +281,7 @@ jobs:
         github.event.inputs.package_scope == 'full-pipeline') &&
        (needs.detect-changes.outputs.individual-services != '[]' || github.event.inputs.force_publish == 'true'))
     runs-on:
-      - codebuild-${{ env.CODEBUILD_PROJECT_NAME }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - codebuild-myapp-project-${{ github.run_id }}-${{ github.run_attempt }}
         registration-group-id:1
     strategy:
       fail-fast: false
@@ -374,7 +374,7 @@ jobs:
         github.event.inputs.package_scope == 'full-pipeline') &&
        (needs.detect-changes.outputs.individual-utilities != '[]' || github.event.inputs.force_publish == 'true'))
     runs-on:
-      - codebuild-${{ env.CODEBUILD_PROJECT_NAME }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - codebuild-myapp-project-${{ github.run_id }}-${{ github.run_attempt }}
         registration-group-id:1
     strategy:
       fail-fast: false
@@ -468,7 +468,7 @@ jobs:
          github.event.inputs.package_scope == 'full-pipeline') &&
         (needs.detect-changes.outputs.services-changed == 'true' || github.event.inputs.force_publish == 'true')))
     runs-on:
-      - codebuild-${{ env.CODEBUILD_PROJECT_NAME }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - codebuild-myapp-project-${{ github.run_id }}-${{ github.run_attempt }}
         registration-group-id:1
     outputs:
       services-aggregate-status: ${{ job.status }}
@@ -565,7 +565,7 @@ jobs:
          github.event.inputs.package_scope == 'full-pipeline') &&
         (needs.detect-changes.outputs.utilities-changed == 'true' || github.event.inputs.force_publish == 'true')))
     runs-on:
-      - codebuild-${{ env.CODEBUILD_PROJECT_NAME }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - codebuild-myapp-project-${{ github.run_id }}-${{ github.run_attempt }}
         registration-group-id:1
     outputs:
       utilities-aggregate-status: ${{ job.status }}
@@ -668,7 +668,7 @@ jobs:
          github.event.inputs.package_scope == 'full-pipeline') &&
         (needs.detect-changes.outputs.services-changed == 'true' || needs.detect-changes.outputs.utilities-changed == 'true' || github.event.inputs.force_publish == 'true')))
     runs-on:
-      - codebuild-${{ env.CODEBUILD_PROJECT_NAME }}-${{ github.run_id }}-${{ github.run_attempt }}
+      - codebuild-myapp-project-${{ github.run_id }}-${{ github.run_attempt }}
         registration-group-id:1
     outputs:
       main-package-status: ${{ job.status }}
