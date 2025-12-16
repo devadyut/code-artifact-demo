@@ -85,7 +85,7 @@ jobs:
   detect-changes:
     runs-on:
       - codebuild-${{ env.CODEBUILD_PROJECT_NAME }}-${{ github.run_id }}-${{ github.run_attempt }}
-      registration-group-id: 2
+        registration-group-id: 2
     if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/development' || github.event_name == 'workflow_dispatch'
     outputs:
       modules-changed: ${{ steps.changes.outputs.modules }}
@@ -274,7 +274,7 @@ jobs:
     if: needs.detect-changes.outputs.should-deploy == 'true'
     runs-on:
       - codebuild-${{ env.CODEBUILD_PROJECT_NAME }}-${{ github.run_id }}-${{ github.run_attempt }}
-      registration-group-id: 2
+        registration-group-id: 2
     outputs:
       deployment-status: ${{ steps.deploy.outputs.deployment-status }}
       deployment-error: ${{ steps.deploy.outputs.deployment-error }}
@@ -581,7 +581,7 @@ jobs:
     if: always() && needs.detect-changes.outputs.should-deploy == 'true'
     runs-on:
       - codebuild-${{ env.CODEBUILD_PROJECT_NAME }}-${{ github.run_id }}-${{ github.run_attempt }}
-      registration-group-id: 2
+        registration-group-id: 2
     steps:
       - name: Generate comprehensive deployment summary
         run: |

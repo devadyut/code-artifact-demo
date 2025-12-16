@@ -70,7 +70,7 @@ jobs:
   detect-changes:
     runs-on:
       - codebuild-${{ env.CODEBUILD_PROJECT_NAME }}-${{ github.run_id }}-${{ github.run_attempt }}
-      registration-group-id: 1
+        registration-group-id: 1
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     outputs:
       services-changed: ${{ steps.changes.outputs.services }}
@@ -282,7 +282,7 @@ jobs:
        (needs.detect-changes.outputs.individual-services != '[]' || github.event.inputs.force_publish == 'true'))
     runs-on:
       - codebuild-${{ env.CODEBUILD_PROJECT_NAME }}-${{ github.run_id }}-${{ github.run_attempt }}
-      registration-group-id: 1
+        registration-group-id: 1
     strategy:
       fail-fast: false
       matrix:
@@ -375,7 +375,7 @@ jobs:
        (needs.detect-changes.outputs.individual-utilities != '[]' || github.event.inputs.force_publish == 'true'))
     runs-on:
       - codebuild-${{ env.CODEBUILD_PROJECT_NAME }}-${{ github.run_id }}-${{ github.run_attempt }}
-      registration-group-id: 1
+        registration-group-id: 1
     strategy:
       fail-fast: false
       matrix:
@@ -469,7 +469,7 @@ jobs:
         (needs.detect-changes.outputs.services-changed == 'true' || github.event.inputs.force_publish == 'true')))
     runs-on:
       - codebuild-${{ env.CODEBUILD_PROJECT_NAME }}-${{ github.run_id }}-${{ github.run_attempt }}
-      registration-group-id: 1
+      - registration-group-id: 1
     outputs:
       services-aggregate-status: ${{ job.status }}
     steps:
@@ -566,7 +566,7 @@ jobs:
         (needs.detect-changes.outputs.utilities-changed == 'true' || github.event.inputs.force_publish == 'true')))
     runs-on:
       - codebuild-${{ env.CODEBUILD_PROJECT_NAME }}-${{ github.run_id }}-${{ github.run_attempt }}
-      registration-group-id: 1
+      - registration-group-id: 1
     outputs:
       utilities-aggregate-status: ${{ job.status }}
     steps:
@@ -669,7 +669,7 @@ jobs:
         (needs.detect-changes.outputs.services-changed == 'true' || needs.detect-changes.outputs.utilities-changed == 'true' || github.event.inputs.force_publish == 'true')))
     runs-on:
       - codebuild-${{ env.CODEBUILD_PROJECT_NAME }}-${{ github.run_id }}-${{ github.run_attempt }}
-      registration-group-id: 1
+      - registration-group-id: 1
     outputs:
       main-package-status: ${{ job.status }}
     steps:
